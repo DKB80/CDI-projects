@@ -3,6 +3,9 @@ requests>=2.31
 python-dotenv>=1.0
 anthropic>=0.92
 
+# Word .docx export for the summary report (bundles Pandoc binary, ~100MB)
+pypandoc-binary>=1.13
+
 # Azure / Microsoft Graph path (scrape_outlook.py)
 msal>=1.28
 

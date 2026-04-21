@@ -60,7 +60,7 @@ import msal
 import requests
 from dotenv import load_dotenv
 
-from summarize import summarize_emails
+from summarize import render_docx, summarize_emails
 
 load_dotenv()
 
@@ -336,9 +336,13 @@ def main() -> int:
         [normalize_for_summary(m) for m in bodied],
         args.keywords,
     )
-    summary_path = args.output / "SUMMARY.md"
-    summary_path.write_text(summary)
-    print(f"Summary: {summary_path}")
+    summary_md = args.output / "SUMMARY.md"
+    summary_md.write_text(summary, encoding="utf-8")
+    print(f"Summary (markdown): {summary_md}")
+
+    summary_docx = args.output / "SUMMARY.docx"
+    if render_docx(summary, summary_docx):
+        print(f"Summary (Word):     {summary_docx}")
     return 0
 
 

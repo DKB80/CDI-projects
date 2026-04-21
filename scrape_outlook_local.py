@@ -66,7 +66,7 @@ except ImportError:
 
 from dotenv import load_dotenv
 
-from summarize import summarize_emails
+from summarize import render_docx, summarize_emails
 
 load_dotenv()
 
@@ -342,9 +342,13 @@ def main() -> int:
     sample = index[-args.max_emails_for_summary:] if len(index) > args.max_emails_for_summary else index
     print(f"\nGenerating summary with Claude Opus 4.7 ({len(sample)} emails)...")
     summary = summarize_emails(sample, args.keywords)
-    summary_path = args.output / "SUMMARY.md"
-    summary_path.write_text(summary, encoding="utf-8")
-    print(f"Summary: {summary_path}")
+    summary_md = args.output / "SUMMARY.md"
+    summary_md.write_text(summary, encoding="utf-8")
+    print(f"Summary (markdown): {summary_md}")
+
+    summary_docx = args.output / "SUMMARY.docx"
+    if render_docx(summary, summary_docx):
+        print(f"Summary (Word):     {summary_docx}")
     return 0
 
 

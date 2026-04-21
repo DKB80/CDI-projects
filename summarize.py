@@ -5,6 +5,7 @@ call summarize_emails() with a list of normalized email dicts.
 """
 
 import sys
+from pathlib import Path
 
 
 EMAIL_SEPARATOR = "\n\n--- EMAIL ---\n\n"
@@ -95,3 +96,40 @@ def summarize_emails(emails: list[dict], keywords: list[str]) -> str:
         file=sys.stderr,
     )
     return "".join(b.text for b in resp.content if b.type == "text")
+
+
+def render_docx(markdown_text: str, dest: Path) -> bool:
+    """Convert markdown briefing to a Word .docx via Pandoc.
+
+    Returns True on success, False if pypandoc/pandoc isn't available
+    (caller can keep the .md and move on).
+    """
+    try:
+        import pypandoc
+    except ImportError:
+        print(
+            "  pypandoc not installed — skipping .docx (pip install pypandoc-binary).",
+            file=sys.stderr,
+        )
+        return False
+
+    try:
+        pypandoc.convert_text(
+            markdown_text,
+            to="docx",
+            format="gfm",  # GitHub-Flavored Markdown — handles pipe tables
+            outputfile=str(dest),
+            extra_args=["--standalone"],
+        )
+        return True
+    except OSError as e:
+        # pypandoc raises OSError when the pandoc binary itself is missing.
+        print(
+            f"  Pandoc binary not found: {e}\n"
+            "  Install with: pip install pypandoc-binary",
+            file=sys.stderr,
+        )
+        return False
+    except Exception as e:
+        print(f"  .docx conversion failed: {e}", file=sys.stderr)
+        return False
