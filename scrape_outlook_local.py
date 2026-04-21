@@ -86,6 +86,10 @@ SKIP_FOLDERS_DEFAULT = {
 }
 
 OL_MAIL = 43
+# Outlook DefaultItemType values — only scan folders whose default item is mail or post.
+OL_DEFAULT_MAIL = 0
+OL_DEFAULT_POST = 6
+
 # Outlook SaveAs format codes:
 #   3 = olMSG         (legacy ASCII .msg — fails on most Unicode subjects/bodies)
 #   9 = olMSGUnicode  (Unicode .msg — use this for anything modern)
@@ -148,12 +152,17 @@ def search_matches(
         print(f"\nScanning store: {store.Name}")
         for folder in walk_folders(store, skip_folders):
             path = getattr(folder, "FolderPath", folder.Name)
+            # Skip non-mail folders (Calendar, Contacts, Tasks, Notes, Journal)
+            # — they don't have ReceivedTime and generate noise.
+            default_type = getattr(folder, "DefaultItemType", None)
+            if default_type is not None and default_type not in (OL_DEFAULT_MAIL, OL_DEFAULT_POST):
+                continue
             try:
                 items = folder.Items
                 items.Sort("[ReceivedTime]", True)
                 filtered = items.Restrict(date_filter)
             except Exception as e:
-                print(f"  [skip] {path}: {e}", file=sys.stderr)
+                print(f"  [skip] {path}: {format_com_error(e)}", file=sys.stderr)
                 continue
 
             folder_hits = 0
