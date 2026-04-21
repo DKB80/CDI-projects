@@ -86,12 +86,31 @@ SKIP_FOLDERS_DEFAULT = {
 }
 
 OL_MAIL = 43
-OL_SAVE_MSG = 3
+# Outlook SaveAs format codes:
+#   3 = olMSG         (legacy ASCII .msg — fails on most Unicode subjects/bodies)
+#   9 = olMSGUnicode  (Unicode .msg — use this for anything modern)
+OL_SAVE_MSG = 9
+
+# Windows MAX_PATH (minus a safety margin for the output dir prefix + extension).
+MAX_FILENAME_LEN = 120
 
 
-def sanitize_filename(name: str, max_len: int = 120) -> str:
-    cleaned = re.sub(r"[^\w\-.() ]+", "_", name).strip("._ ")
+def sanitize_filename(name: str, max_len: int = MAX_FILENAME_LEN) -> str:
+    # Strip control chars + Windows-reserved chars; collapse whitespace.
+    cleaned = re.sub(r"[\x00-\x1f<>:\"/\\|?*]+", "_", name or "")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip("._ ")
+    # Windows also disallows trailing dots/spaces and reserves CON, PRN, etc.
+    if cleaned.upper() in {"CON", "PRN", "AUX", "NUL"} or re.match(r"^(COM|LPT)\d$", cleaned.upper()):
+        cleaned = "_" + cleaned
     return (cleaned or "unnamed")[:max_len]
+
+
+def format_com_error(e: Exception) -> str:
+    """Extract the human-readable part of a pywin32 com_error tuple."""
+    args = getattr(e, "args", ())
+    if len(args) >= 3 and isinstance(args[2], tuple) and len(args[2]) >= 3:
+        return f"{args[2][1]}: {args[2][2]}".strip()
+    return str(e)
 
 
 def walk_folders(folder, skip_names: set[str]):
@@ -194,7 +213,7 @@ def save_item(item, emails_dir: Path, attachments_dir: Path, extract_attachments
                 att.SaveAsFile(str(dest))
                 saved_attachments.append(str(dest))
             except Exception as e:
-                print(f"    attachment save failed ({att_name}): {e}", file=sys.stderr)
+                print(f"    attachment save failed ({att_name}): {format_com_error(e)}", file=sys.stderr)
 
     return {
         "entry_id": item.EntryID,
@@ -270,7 +289,7 @@ def main() -> int:
             entry = save_item(item, emails_dir, attachments_dir, not args.no_attachments)
             index.append(entry)
         except Exception as e:
-            print(f"  [{i}/{len(matches)}] save failed: {e}", file=sys.stderr)
+            print(f"  [{i}/{len(matches)}] save failed: {format_com_error(e)}", file=sys.stderr)
             continue
         if i % 10 == 0 or i == len(matches):
             print(f"  [{i}/{len(matches)}] saved")
