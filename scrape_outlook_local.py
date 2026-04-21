@@ -256,6 +256,11 @@ def main() -> int:
     if args.include_junk:
         skip.discard("Junk Email")
 
+    # Outlook's SaveAs resolves relative paths against its own working directory
+    # (usually somewhere under Program Files), not Python's. Always pass absolute.
+    args.output = args.output.absolute()
+    print(f"Output directory: {args.output}")
+
     print("Connecting to Outlook...")
     try:
         app = win32com.client.Dispatch("Outlook.Application")
@@ -282,17 +287,37 @@ def main() -> int:
     attachments_dir = args.output / "attachments"
     emails_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"\nSaving emails to {emails_dir}/ ...")
+    print(f"\nSaving emails to {emails_dir} ...")
     index = []
+    consecutive_failures = 0
     for i, item in enumerate(matches, 1):
         try:
             entry = save_item(item, emails_dir, attachments_dir, not args.no_attachments)
             index.append(entry)
+            consecutive_failures = 0
         except Exception as e:
+            consecutive_failures += 1
             print(f"  [{i}/{len(matches)}] save failed: {format_com_error(e)}", file=sys.stderr)
+            if consecutive_failures >= 3 and len(index) == 0:
+                print(
+                    "\nAborting — first 3 saves failed in a row. Likely causes:\n"
+                    f"  - Output path not writable: {emails_dir}\n"
+                    f"    (exists: {emails_dir.exists()}, writable: "
+                    f"{os.access(emails_dir, os.W_OK) if emails_dir.exists() else 'n/a'})\n"
+                    "  - OneDrive 'Files On-Demand' blocking creation — try --output C:\\temp\\outlook_scrape\n"
+                    "  - Outlook policy blocking Save As to this location\n"
+                    "  - Antivirus quarantining .msg writes\n"
+                    "Try saving one .msg from Outlook manually (right-click > Save As) to that folder first.",
+                    file=sys.stderr,
+                )
+                return 2
             continue
         if i % 10 == 0 or i == len(matches):
-            print(f"  [{i}/{len(matches)}] saved")
+            print(f"  [{i}/{len(matches)}] saved, {len(index)} successful")
+
+    if len(index) == 0:
+        print("\nNo emails were saved — skipping summary.", file=sys.stderr)
+        return 2
 
     # Write index without bodies (bodies are huge; .msg files hold them)
     index_public = [{k: v for k, v in e.items() if k != "body"} for e in index]
