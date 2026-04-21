@@ -6,6 +6,9 @@ anthropic>=0.92
 # Word .docx export for the summary report (bundles Pandoc binary, ~100MB)
 pypandoc-binary>=1.13
 
+# MCP server for Claude Desktop integration (mcp_server.py)
+mcp>=1.2
+
 # Azure / Microsoft Graph path (scrape_outlook.py)
 msal>=1.28
 

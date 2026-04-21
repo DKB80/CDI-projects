@@ -22,10 +22,16 @@ def _format_email(e: dict, body_char_limit: int = 3000) -> str:
     )
 
 
-def summarize_emails(emails: list[dict], keywords: list[str]) -> str:
+def summarize_emails(
+    emails: list[dict],
+    keywords: list[str],
+    *,
+    project_label: str = "Project Email Archive",
+) -> str:
     """Generate a markdown briefing.
 
     Each email dict must have: from, to, date, subject, body.
+    `project_label` is used as the H1 heading of the briefing.
     """
     import anthropic
 
@@ -51,8 +57,7 @@ def summarize_emails(emails: list[dict], keywords: list[str]) -> str:
     ]
 
     prompt = (
-        "Produce a markdown report titled "
-        "`# Project 307 – Horizon Power Remote Communities – Email Briefing`.\n\n"
+        f"Produce a markdown report titled `# {project_label} – Email Briefing`.\n\n"
         "Include these sections in order:\n\n"
         "## Overview\n"
         "One short paragraph: date range covered, email count, main threads/topics, "
@@ -69,8 +74,7 @@ def summarize_emails(emails: list[dict], keywords: list[str]) -> str:
         "## Open Risks & Blockers\n"
         "Bulleted list: risk/blocker, potential impact, suggested next step, source.\n\n"
         "## Key Contacts\n"
-        "Table: `Name | Email | Role | Relevance`. Role only if mentioned in emails. "
-        "Include Hossein prominently if present.\n\n"
+        "Table: `Name | Email | Role | Relevance`. Role only if mentioned in emails.\n\n"
         "## Outstanding Questions\n"
         "Bulleted list of questions asked in emails that do not appear to have "
         "been answered.\n\n"

@@ -2,42 +2,36 @@
 """
 Scrape Classic Outlook desktop (Windows) for project-related emails via COM,
 save copies as .msg + attachments to a local folder, and generate a
-Claude-powered briefing with action items.
+Claude Opus 4.7 briefing (markdown + Word doc).
 
-No Azure, no API credentials, no network calls to Microsoft — reads what
-Outlook already has cached on your machine.
+No Azure, no Microsoft credentials, no network calls to Microsoft — reads
+what Outlook already has cached on your machine.
+
+The core work lives in `scrape_outlook()` and can be called from:
+  - this CLI (`main()`)
+  - the MCP server in `mcp_server.py` (for Claude Desktop)
+  - any other Python process
 
 SETUP
 -----
 1. Windows with Classic Outlook desktop (File / Home / Send ribbon). Your
-   account (dan.bailey@cdienergy.com.au) must be signed in and the mail
-   folders visible in Outlook.
+   account must be signed in and the mail folders visible in Outlook.
 2. pip install -r requirements.txt
-   (pywin32 installs only on Windows; the Linux/Mac install will skip it.)
-3. Copy .env.example to .env and fill in ANTHROPIC_API_KEY. CLIENT_ID and
-   TENANT_ID are only needed for the Azure version; leave them blank here.
-4. Open Outlook (it must be running), then from the same Windows machine:
-     python scrape_outlook_local.py
+3. Copy .env.example to .env and fill in ANTHROPIC_API_KEY.
+4. Open Outlook (it must be running), then:
+     python scrape_outlook_local.py --keywords "Project 402" "Rio Tinto"
 
 USAGE
 -----
-  python scrape_outlook_local.py                       # defaults: 12 months, all folders
-  python scrape_outlook_local.py --months 24
-  python scrape_outlook_local.py --keywords "Horizon Power" "Hossein"
-  python scrape_outlook_local.py --no-summary
-  python scrape_outlook_local.py --include-deleted     # also search Deleted Items
-
-OUTPUT
-------
-  output/
-    emails/<date>__<sender>__<subject>.msg   # native Outlook files (open in Outlook)
-    attachments/<folder>/<filename>           # extracted attachments per email
-    index.json                                # machine-readable index
-    SUMMARY.md                                # Claude-generated briefing
+  python scrape_outlook_local.py --keywords "Project 402" "Rio Tinto"
+  python scrape_outlook_local.py --keywords "Horizon Power" --exclude "invoice" "leave"
+  python scrape_outlook_local.py --keywords X --project "Horizon Power - Remote Communities"
+  python scrape_outlook_local.py --keywords X --months 24 --include-deleted
+  python scrape_outlook_local.py --keywords X --no-summary
 
 NOTES
 -----
-- Outlook cached mode: if your Outlook is set to keep <12 months offline,
+- Outlook cached mode: if your Outlook is set to keep <N months offline,
   older emails still search but may pull from the server (slower). Check
   File > Account Settings > Account Settings > Exchange Account > Change >
   "Mail to keep offline" if you see gaps.
@@ -52,6 +46,7 @@ import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Callable, Iterable
 
 try:
     import pythoncom  # noqa: F401
@@ -70,9 +65,12 @@ from summarize import render_docx, summarize_emails
 
 load_dotenv()
 
-DEFAULT_KEYWORDS = ["Horizon Power", "307", "Hossein", "remote communities"]
+# Defaults the CLI falls back on when --keywords / --project aren't supplied.
+# These are tuned for the original Horizon Power / Project 307 brief.
+CLI_DEFAULT_KEYWORDS = ["Horizon Power", "307", "Hossein", "remote communities"]
+CLI_DEFAULT_PROJECT = "Project 307 – Horizon Power Remote Communities"
 
-# Folders to skip by default. User can override with --include-deleted / --include-junk.
+# System folders that are almost never what the user wants to search.
 SKIP_FOLDERS_DEFAULT = {
     "Deleted Items",
     "Junk Email",
@@ -86,31 +84,29 @@ SKIP_FOLDERS_DEFAULT = {
 }
 
 OL_MAIL = 43
-# Outlook DefaultItemType values — only scan folders whose default item is mail or post.
 OL_DEFAULT_MAIL = 0
 OL_DEFAULT_POST = 6
-
-# Outlook SaveAs format codes:
-#   3 = olMSG         (legacy ASCII .msg — fails on most Unicode subjects/bodies)
-#   9 = olMSGUnicode  (Unicode .msg — use this for anything modern)
+# 9 = olMSGUnicode. Do not use 3 (olMSG legacy ASCII) — it fails on Unicode.
 OL_SAVE_MSG = 9
 
-# Windows MAX_PATH (minus a safety margin for the output dir prefix + extension).
 MAX_FILENAME_LEN = 120
+
+Logger = Callable[[str], None]
+
+
+def _noop(msg: str) -> None:
+    pass
 
 
 def sanitize_filename(name: str, max_len: int = MAX_FILENAME_LEN) -> str:
-    # Strip control chars + Windows-reserved chars; collapse whitespace.
     cleaned = re.sub(r"[\x00-\x1f<>:\"/\\|?*]+", "_", name or "")
     cleaned = re.sub(r"\s+", " ", cleaned).strip("._ ")
-    # Windows also disallows trailing dots/spaces and reserves CON, PRN, etc.
     if cleaned.upper() in {"CON", "PRN", "AUX", "NUL"} or re.match(r"^(COM|LPT)\d$", cleaned.upper()):
         cleaned = "_" + cleaned
     return (cleaned or "unnamed")[:max_len]
 
 
 def format_com_error(e: Exception) -> str:
-    """Extract the human-readable part of a pywin32 com_error tuple."""
     args = getattr(e, "args", ())
     if len(args) >= 3 and isinstance(args[2], tuple) and len(args[2]) >= 3:
         return f"{args[2][1]}: {args[2][2]}".strip()
@@ -134,35 +130,45 @@ def outlook_date_filter(cutoff: datetime) -> str:
     return "[ReceivedTime] >= '" + cutoff.strftime("%m/%d/%Y %I:%M %p") + "'"
 
 
+def _folder_path_matches_any(path: str, needles: Iterable[str]) -> bool:
+    path_low = path.lower()
+    return any(n.lower() in path_low for n in needles)
+
+
 def search_matches(
     namespace,
     keywords: list[str],
+    exclude_keywords: list[str],
     cutoff: datetime,
     skip_folders: set[str],
+    include_folders_only: list[str] | None,
+    log: Logger,
 ) -> list:
     matches = []
     seen: set[str] = set()
     kw_lower = [k.lower() for k in keywords]
+    ex_lower = [e.lower() for e in (exclude_keywords or [])]
     date_filter = outlook_date_filter(cutoff)
 
     stores = list(namespace.Folders)
-    print(f"Found {len(stores)} mail store(s): {[s.Name for s in stores]}")
+    log(f"Found {len(stores)} mail store(s): {[s.Name for s in stores]}")
 
     for store in stores:
-        print(f"\nScanning store: {store.Name}")
+        log(f"Scanning store: {store.Name}")
         for folder in walk_folders(store, skip_folders):
             path = getattr(folder, "FolderPath", folder.Name)
-            # Skip non-mail folders (Calendar, Contacts, Tasks, Notes, Journal)
-            # — they don't have ReceivedTime and generate noise.
             default_type = getattr(folder, "DefaultItemType", None)
             if default_type is not None and default_type not in (OL_DEFAULT_MAIL, OL_DEFAULT_POST):
                 continue
+            if include_folders_only and not _folder_path_matches_any(path, include_folders_only):
+                continue
+
             try:
                 items = folder.Items
                 items.Sort("[ReceivedTime]", True)
                 filtered = items.Restrict(date_filter)
             except Exception as e:
-                print(f"  [skip] {path}: {format_com_error(e)}", file=sys.stderr)
+                log(f"  [skip] {path}: {format_com_error(e)}")
                 continue
 
             folder_hits = 0
@@ -173,26 +179,28 @@ def search_matches(
                         subject = item.Subject or ""
                         body = item.Body or ""
                         haystack = (subject + "\n" + body).lower()
-                        if any(k in haystack for k in kw_lower):
+                        if any(k in haystack for k in kw_lower) and not any(
+                            e in haystack for e in ex_lower
+                        ):
                             entry_id = item.EntryID
                             if entry_id not in seen:
                                 seen.add(entry_id)
                                 matches.append(item)
                                 folder_hits += 1
                 except Exception as e:
-                    print(f"  [item error] {path}: {e}", file=sys.stderr)
+                    log(f"  [item error] {path}: {e}")
                 try:
                     item = filtered.GetNext()
                 except Exception:
                     break
 
             if folder_hits:
-                print(f"  {path}: {folder_hits} match(es)")
+                log(f"  {path}: {folder_hits} match(es)")
 
     return matches
 
 
-def save_item(item, emails_dir: Path, attachments_dir: Path, extract_attachments: bool) -> dict:
+def save_item(item, emails_dir: Path, attachments_dir: Path, extract_attachments: bool, log: Logger) -> dict:
     received = item.ReceivedTime
     date_str = received.strftime("%Y-%m-%d")
     sender = (
@@ -213,7 +221,7 @@ def save_item(item, emails_dir: Path, attachments_dir: Path, extract_attachments
         att_dir = attachments_dir / sanitize_filename(f"{date_str}__{subject}__{item.EntryID[-8:]}")
         for i in range(1, item.Attachments.Count + 1):
             att = item.Attachments.Item(i)
-            if att.Type != 1:  # 1 = olByValue (actual file)
+            if att.Type != 1:
                 continue
             att_name = sanitize_filename(att.FileName or f"attachment_{i}")
             att_dir.mkdir(parents=True, exist_ok=True)
@@ -222,7 +230,7 @@ def save_item(item, emails_dir: Path, attachments_dir: Path, extract_attachments
                 att.SaveAsFile(str(dest))
                 saved_attachments.append(str(dest))
             except Exception as e:
-                print(f"    attachment save failed ({att_name}): {format_com_error(e)}", file=sys.stderr)
+                log(f"    attachment save failed ({att_name}): {format_com_error(e)}")
 
     return {
         "entry_id": item.EntryID,
@@ -237,16 +245,162 @@ def save_item(item, emails_dir: Path, attachments_dir: Path, extract_attachments
     }
 
 
+def scrape_outlook(
+    *,
+    keywords: list[str],
+    exclude_keywords: list[str] | None = None,
+    project_label: str = "Project Email Archive",
+    months: int = 12,
+    output: Path | str = Path("output"),
+    include_deleted: bool = False,
+    include_junk: bool = False,
+    extra_exclude_folders: list[str] | None = None,
+    include_folders_only: list[str] | None = None,
+    skip_attachments: bool = False,
+    generate_summary: bool = True,
+    max_emails_for_summary: int = 200,
+    log: Logger | None = None,
+) -> dict:
+    """Core scrape — callable from CLI, MCP server, or any Python process.
+
+    Returns a dict with: match_count, saved_count, emails_dir, index_path,
+    summary_markdown, summary_md_path, summary_docx_path, errors.
+    """
+    log = log or _noop
+    if not keywords:
+        raise ValueError("At least one keyword is required.")
+
+    skip = set(SKIP_FOLDERS_DEFAULT)
+    if include_deleted:
+        skip.discard("Deleted Items")
+    if include_junk:
+        skip.discard("Junk Email")
+    if extra_exclude_folders:
+        skip.update(extra_exclude_folders)
+
+    output = Path(output).absolute()
+    emails_dir = output / "emails"
+    attachments_dir = output / "attachments"
+    emails_dir.mkdir(parents=True, exist_ok=True)
+    log(f"Output directory: {output}")
+
+    log("Connecting to Outlook...")
+    try:
+        app = win32com.client.Dispatch("Outlook.Application")
+        ns = app.GetNamespace("MAPI")
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to connect to Outlook: {format_com_error(e)}. "
+            "Make sure Classic Outlook is running on this machine."
+        ) from e
+
+    cutoff = datetime.now() - timedelta(days=30 * months)
+    log(f"Searching for {keywords} since {cutoff.date().isoformat()} "
+        f"(excluding: {exclude_keywords or []})")
+    log(f"Skipping folders: {sorted(skip)}")
+
+    matches = search_matches(
+        ns, keywords, exclude_keywords or [], cutoff,
+        skip, include_folders_only, log,
+    )
+    log(f"Total unique matches: {len(matches)}")
+
+    result: dict = {
+        "match_count": len(matches),
+        "saved_count": 0,
+        "emails_dir": str(emails_dir),
+        "index_path": None,
+        "summary_markdown": None,
+        "summary_md_path": None,
+        "summary_docx_path": None,
+        "errors": [],
+        "keywords": keywords,
+        "exclude_keywords": exclude_keywords or [],
+        "project_label": project_label,
+        "months": months,
+    }
+    if not matches:
+        return result
+
+    matches.sort(key=lambda m: m.ReceivedTime)
+    log(f"Saving emails to {emails_dir} ...")
+
+    index = []
+    consecutive_failures = 0
+    for i, item in enumerate(matches, 1):
+        try:
+            entry = save_item(item, emails_dir, attachments_dir, not skip_attachments, log)
+            index.append(entry)
+            consecutive_failures = 0
+        except Exception as e:
+            consecutive_failures += 1
+            err = f"[{i}/{len(matches)}] save failed: {format_com_error(e)}"
+            result["errors"].append(err)
+            log(err)
+            if consecutive_failures >= 3 and len(index) == 0:
+                result["errors"].append(
+                    f"Aborted after 3 consecutive failures. "
+                    f"emails_dir exists={emails_dir.exists()}, "
+                    f"writable={os.access(emails_dir, os.W_OK) if emails_dir.exists() else 'n/a'}"
+                )
+                return result
+            continue
+        if i % 20 == 0 or i == len(matches):
+            log(f"  [{i}/{len(matches)}] saved, {len(index)} successful")
+
+    result["saved_count"] = len(index)
+    if not index:
+        return result
+
+    index_path = output / "index.json"
+    index_public = [{k: v for k, v in e.items() if k != "body"} for e in index]
+    index_path.write_text(json.dumps(index_public, indent=2))
+    result["index_path"] = str(index_path)
+    log(f"Index: {index_path}")
+
+    if not generate_summary:
+        return result
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        result["errors"].append("ANTHROPIC_API_KEY not set — summary skipped.")
+        log("ANTHROPIC_API_KEY not set — skipping summary.")
+        return result
+
+    sample = index[-max_emails_for_summary:] if len(index) > max_emails_for_summary else index
+    log(f"Generating summary with Claude Opus 4.7 ({len(sample)} emails)...")
+    summary = summarize_emails(sample, keywords, project_label=project_label)
+    result["summary_markdown"] = summary
+
+    summary_md = output / "SUMMARY.md"
+    summary_md.write_text(summary, encoding="utf-8")
+    result["summary_md_path"] = str(summary_md)
+    log(f"Summary (markdown): {summary_md}")
+
+    summary_docx = output / "SUMMARY.docx"
+    if render_docx(summary, summary_docx):
+        result["summary_docx_path"] = str(summary_docx)
+        log(f"Summary (Word):     {summary_docx}")
+
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--keywords", nargs="+", default=DEFAULT_KEYWORDS,
+    parser.add_argument("--keywords", nargs="+", default=CLI_DEFAULT_KEYWORDS,
                         help="Search terms (OR, case-insensitive, subject + body). Default: %(default)s")
+    parser.add_argument("--exclude", nargs="*", default=[],
+                        help="Exclusion phrases — emails containing any of these are dropped.")
+    parser.add_argument("--project", default=CLI_DEFAULT_PROJECT,
+                        help="Project label used in the summary heading (default: %(default)s)")
     parser.add_argument("--months", type=int, default=12,
                         help="Look back this many months (default: %(default)s)")
     parser.add_argument("--output", type=Path, default=Path("output"),
                         help="Output directory (default: %(default)s)")
+    parser.add_argument("--include-folder", nargs="*", default=None, dest="include_folders_only",
+                        help="Restrict search to folder paths containing any of these substrings.")
+    parser.add_argument("--exclude-folder", nargs="*", default=[], dest="extra_exclude_folders",
+                        help="Extra folder names to skip in addition to system folders.")
     parser.add_argument("--include-deleted", action="store_true",
                         help="Also search Deleted Items")
     parser.add_argument("--include-junk", action="store_true",
@@ -259,97 +413,33 @@ def main() -> int:
                         help="Cap on emails fed into the summary prompt (default: %(default)s)")
     args = parser.parse_args()
 
-    skip = set(SKIP_FOLDERS_DEFAULT)
-    if args.include_deleted:
-        skip.discard("Deleted Items")
-    if args.include_junk:
-        skip.discard("Junk Email")
+    def stdout_log(msg: str) -> None:
+        print(msg, flush=True)
 
-    # Outlook's SaveAs resolves relative paths against its own working directory
-    # (usually somewhere under Program Files), not Python's. Always pass absolute.
-    args.output = args.output.absolute()
-    print(f"Output directory: {args.output}")
-
-    print("Connecting to Outlook...")
     try:
-        app = win32com.client.Dispatch("Outlook.Application")
-        ns = app.GetNamespace("MAPI")
+        result = scrape_outlook(
+            keywords=args.keywords,
+            exclude_keywords=args.exclude,
+            project_label=args.project,
+            months=args.months,
+            output=args.output,
+            include_deleted=args.include_deleted,
+            include_junk=args.include_junk,
+            extra_exclude_folders=args.extra_exclude_folders,
+            include_folders_only=args.include_folders_only,
+            skip_attachments=args.no_attachments,
+            generate_summary=not args.no_summary,
+            max_emails_for_summary=args.max_emails_for_summary,
+            log=stdout_log,
+        )
     except Exception as e:
-        print(f"Failed to connect to Outlook: {e}", file=sys.stderr)
-        print("Make sure Classic Outlook is running.", file=sys.stderr)
+        print(f"\nERROR: {e}", file=sys.stderr)
         return 1
 
-    cutoff = datetime.now() - timedelta(days=30 * args.months)
-    print(f"Searching for {args.keywords} in emails since {cutoff.date().isoformat()}")
-    print(f"Skipping folders: {sorted(skip)}")
-
-    matches = search_matches(ns, args.keywords, cutoff, skip)
-    print(f"\nTotal unique matches: {len(matches)}")
-    if not matches:
-        print("Nothing to do.")
-        return 0
-
-    # Sort oldest first for output consistency
-    matches.sort(key=lambda m: m.ReceivedTime)
-
-    emails_dir = args.output / "emails"
-    attachments_dir = args.output / "attachments"
-    emails_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"\nSaving emails to {emails_dir} ...")
-    index = []
-    consecutive_failures = 0
-    for i, item in enumerate(matches, 1):
-        try:
-            entry = save_item(item, emails_dir, attachments_dir, not args.no_attachments)
-            index.append(entry)
-            consecutive_failures = 0
-        except Exception as e:
-            consecutive_failures += 1
-            print(f"  [{i}/{len(matches)}] save failed: {format_com_error(e)}", file=sys.stderr)
-            if consecutive_failures >= 3 and len(index) == 0:
-                print(
-                    "\nAborting — first 3 saves failed in a row. Likely causes:\n"
-                    f"  - Output path not writable: {emails_dir}\n"
-                    f"    (exists: {emails_dir.exists()}, writable: "
-                    f"{os.access(emails_dir, os.W_OK) if emails_dir.exists() else 'n/a'})\n"
-                    "  - OneDrive 'Files On-Demand' blocking creation — try --output C:\\temp\\outlook_scrape\n"
-                    "  - Outlook policy blocking Save As to this location\n"
-                    "  - Antivirus quarantining .msg writes\n"
-                    "Try saving one .msg from Outlook manually (right-click > Save As) to that folder first.",
-                    file=sys.stderr,
-                )
-                return 2
-            continue
-        if i % 10 == 0 or i == len(matches):
-            print(f"  [{i}/{len(matches)}] saved, {len(index)} successful")
-
-    if len(index) == 0:
-        print("\nNo emails were saved — skipping summary.", file=sys.stderr)
-        return 2
-
-    # Write index without bodies (bodies are huge; .msg files hold them)
-    index_public = [{k: v for k, v in e.items() if k != "body"} for e in index]
-    (args.output / "index.json").write_text(json.dumps(index_public, indent=2))
-    print(f"\nIndex: {args.output / 'index.json'}")
-
-    if args.no_summary:
-        return 0
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("\nANTHROPIC_API_KEY not set — skipping summary.", file=sys.stderr)
-        return 0
-
-    sample = index[-args.max_emails_for_summary:] if len(index) > args.max_emails_for_summary else index
-    print(f"\nGenerating summary with Claude Opus 4.7 ({len(sample)} emails)...")
-    summary = summarize_emails(sample, args.keywords)
-    summary_md = args.output / "SUMMARY.md"
-    summary_md.write_text(summary, encoding="utf-8")
-    print(f"Summary (markdown): {summary_md}")
-
-    summary_docx = args.output / "SUMMARY.docx"
-    if render_docx(summary, summary_docx):
-        print(f"Summary (Word):     {summary_docx}")
-    return 0
+    print(f"\nDone. {result['saved_count']}/{result['match_count']} emails saved.")
+    if result["errors"]:
+        print(f"({len(result['errors'])} errors — see above.)", file=sys.stderr)
+    return 0 if result["saved_count"] > 0 or result["match_count"] == 0 else 2
 
 
 if __name__ == "__main__":

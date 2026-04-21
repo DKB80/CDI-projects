@@ -222,6 +222,10 @@ def main() -> int:
     )
     parser.add_argument("--keywords", nargs="+", default=DEFAULT_KEYWORDS,
                         help="Search terms (OR). Default: %(default)s")
+    parser.add_argument("--exclude", nargs="*", default=[],
+                        help="Exclusion phrases — emails containing any of these are dropped.")
+    parser.add_argument("--project", default="Project 307 – Horizon Power Remote Communities",
+                        help="Project label for the summary heading.")
     parser.add_argument("--months", type=int, default=12,
                         help="Look back this many months (default: %(default)s)")
     parser.add_argument("--output", type=Path, default=Path("output"),
@@ -331,10 +335,23 @@ def main() -> int:
         if i % 20 == 0 or i == len(sample):
             print(f"  [{i}/{len(sample)}] bodies fetched")
 
+    # Apply exclusion filter
+    if args.exclude:
+        ex_lower = [e.lower() for e in args.exclude]
+        def _excluded(m):
+            body_obj = m.get("body") or {}
+            content = body_obj.get("content", "") if isinstance(body_obj, dict) else ""
+            hay = ((m.get("subject") or "") + "\n" + content).lower()
+            return any(e in hay for e in ex_lower)
+        before = len(bodied)
+        bodied = [m for m in bodied if not _excluded(m)]
+        print(f"Excluded {before - len(bodied)} emails via --exclude.")
+
     print("\nGenerating summary with Claude Opus 4.7...")
     summary = summarize_emails(
         [normalize_for_summary(m) for m in bodied],
         args.keywords,
+        project_label=args.project,
     )
     summary_md = args.output / "SUMMARY.md"
     summary_md.write_text(summary, encoding="utf-8")
