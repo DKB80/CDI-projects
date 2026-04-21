@@ -1,4 +1,10 @@
-msal>=1.28
+# Shared
 requests>=2.31
 python-dotenv>=1.0
 anthropic>=0.92
+
+# Azure / Microsoft Graph path (scrape_outlook.py)
+msal>=1.28
+
+# Classic Outlook desktop path (scrape_outlook_local.py) — Windows only
+pywin32>=306; sys_platform == 'win32'

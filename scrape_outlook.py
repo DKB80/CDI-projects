@@ -60,6 +60,8 @@ import msal
 import requests
 from dotenv import load_dotenv
 
+from summarize import summarize_emails
+
 load_dotenv()
 
 GRAPH = "https://graph.microsoft.com/v1.0"
@@ -195,97 +197,22 @@ def strip_html(html: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def format_email_for_corpus(m: dict, body_char_limit: int = 3000) -> str:
-    sender = m.get("from", {}).get("emailAddress", {}).get("address", "unknown")
-    date = m.get("receivedDateTime", "")
-    subject = m.get("subject", "(no subject)")
-    recipients = ", ".join(
-        r.get("emailAddress", {}).get("address", "")
-        for r in m.get("toRecipients", [])
-    )
+def normalize_for_summary(m: dict) -> dict:
+    """Convert a Graph message dict to the flat shape expected by summarize_emails."""
     body = m.get("body") or {}
     content = body.get("content", "") if isinstance(body, dict) else ""
-    if body.get("contentType") == "html":
+    if isinstance(body, dict) and body.get("contentType") == "html":
         content = strip_html(content)
-    content = content.strip()[:body_char_limit]
-    return (
-        f"From: {sender}\n"
-        f"To: {recipients}\n"
-        f"Date: {date}\n"
-        f"Subject: {subject}\n\n"
-        f"{content}"
-    )
-
-
-def summarize_with_claude(messages: list[dict], keywords: list[str]) -> str:
-    import anthropic
-
-    client = anthropic.Anthropic()
-    corpus = "\n\n--- EMAIL ---\n\n".join(format_email_for_corpus(m) for m in messages)
-
-    system = [
-        {
-            "type": "text",
-            "text": (
-                "You are a project analyst producing an action-oriented briefing from a "
-                "project email archive. Your output goes to a project manager who needs "
-                "to catch up quickly and identify what to do next. "
-                "Be specific. Cite sender + date for every finding. Do not invent facts "
-                "or assign owners that were not named in the emails."
-            ),
-        },
-        {
-            "type": "text",
-            "text": f"EMAIL CORPUS (filtered on keywords: {', '.join(keywords)}):\n\n{corpus}",
-            "cache_control": {"type": "ephemeral"},
-        },
-    ]
-
-    prompt = (
-        "Produce a markdown report titled "
-        "`# Project 307 – Horizon Power Remote Communities – Email Briefing`.\n\n"
-        "Include these sections in order:\n\n"
-        "## Overview\n"
-        "One short paragraph: date range covered, email count, main threads/topics, "
-        "key people involved.\n\n"
-        "## Key Decisions\n"
-        "Bulleted list. For each: what was decided, who decided, date, source "
-        "(sender + date + subject).\n\n"
-        "## Action Items\n"
-        "Markdown table with columns: `Owner | Action | Due Date | Status | Source`. "
-        "Include actions explicitly assigned AND actions clearly expected but not "
-        "formally assigned. Use `Unassigned` when the owner is unclear. "
-        "Status is one of `Open`, `Done`, `Blocked`, `Unclear` based on the thread. "
-        "Source format: `<sender>, <YYYY-MM-DD>, \"<subject>\"`.\n\n"
-        "## Open Risks & Blockers\n"
-        "Bulleted list: risk/blocker, potential impact, suggested next step, source.\n\n"
-        "## Key Contacts\n"
-        "Table: `Name | Email | Role | Relevance`. Role only if mentioned in emails. "
-        "Include Hossein prominently if present.\n\n"
-        "## Outstanding Questions\n"
-        "Bulleted list of questions asked in emails that do not appear to have been answered.\n\n"
-        "Keep it tight. Prioritise specificity over breadth. If a section has no "
-        "material content, write `_None identified._` rather than padding."
-    )
-
-    resp = client.messages.create(
-        model="claude-opus-4-7",
-        max_tokens=16000,
-        thinking={"type": "adaptive"},
-        output_config={"effort": "high"},
-        system=system,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    usage = resp.usage
-    print(
-        f"  Claude usage: input={usage.input_tokens}, "
-        f"cache_read={usage.cache_read_input_tokens}, "
-        f"cache_write={usage.cache_creation_input_tokens}, "
-        f"output={usage.output_tokens}",
-        file=sys.stderr,
-    )
-    return "".join(b.text for b in resp.content if b.type == "text")
+    return {
+        "from": m.get("from", {}).get("emailAddress", {}).get("address", "unknown"),
+        "to": ", ".join(
+            r.get("emailAddress", {}).get("address", "")
+            for r in m.get("toRecipients", [])
+        ),
+        "date": m.get("receivedDateTime", ""),
+        "subject": m.get("subject", "(no subject)"),
+        "body": content,
+    }
 
 
 def main() -> int:
@@ -405,7 +332,10 @@ def main() -> int:
             print(f"  [{i}/{len(sample)}] bodies fetched")
 
     print("\nGenerating summary with Claude Opus 4.7...")
-    summary = summarize_with_claude(bodied, args.keywords)
+    summary = summarize_emails(
+        [normalize_for_summary(m) for m in bodied],
+        args.keywords,
+    )
     summary_path = args.output / "SUMMARY.md"
     summary_path.write_text(summary)
     print(f"Summary: {summary_path}")
