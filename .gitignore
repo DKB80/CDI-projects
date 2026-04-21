@@ -1,0 +1,7 @@
+.env
+output/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.outlook_scrape_token_cache.bin
