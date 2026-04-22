@@ -139,6 +139,7 @@ def search_matches(
     namespace,
     keywords: list[str],
     exclude_keywords: list[str],
+    from_senders: list[str],
     cutoff: datetime,
     skip_folders: set[str],
     include_folders_only: list[str] | None,
@@ -148,6 +149,7 @@ def search_matches(
     seen: set[str] = set()
     kw_lower = [k.lower() for k in keywords]
     ex_lower = [e.lower() for e in (exclude_keywords or [])]
+    from_lower = [f.lower() for f in (from_senders or [])]
     date_filter = outlook_date_filter(cutoff)
 
     stores = list(namespace.Folders)
@@ -178,10 +180,25 @@ def search_matches(
                     if getattr(item, "Class", 0) == OL_MAIL:
                         subject = item.Subject or ""
                         body = item.Body or ""
-                        haystack = (subject + "\n" + body).lower()
-                        if any(k in haystack for k in kw_lower) and not any(
-                            e in haystack for e in ex_lower
-                        ):
+                        sender_email = (getattr(item, "SenderEmailAddress", "") or "").lower()
+                        sender_name = (getattr(item, "SenderName", "") or "").lower()
+                        sender_haystack = f"{sender_email} {sender_name}"
+                        body_haystack = (subject + "\n" + body).lower()
+
+                        # Sender filter (AND if supplied)
+                        if from_lower and not any(f in sender_haystack for f in from_lower):
+                            try:
+                                item = filtered.GetNext()
+                            except Exception:
+                                break
+                            continue
+
+                        # Keyword filter (AND if any supplied). If no keywords,
+                        # the sender filter alone decides.
+                        kw_ok = (not kw_lower) or any(k in body_haystack for k in kw_lower)
+                        ex_ok = not any(e in body_haystack for e in ex_lower)
+
+                        if kw_ok and ex_ok:
                             entry_id = item.EntryID
                             if entry_id not in seen:
                                 seen.add(entry_id)
@@ -198,6 +215,70 @@ def search_matches(
                 log(f"  {path}: {folder_hits} match(es)")
 
     return matches
+
+
+def list_recent_senders(
+    namespace,
+    months_back: int = 12,
+    log: Logger | None = None,
+    progress_cb: Callable[[int, int], bool] | None = None,
+) -> list[dict]:
+    """Walk all mail folders (minus Sent Items) and return unique senders
+    sorted by frequency. Used by the GUI sender picker.
+
+    progress_cb(scanned_folders, scanned_items) -> False to cancel.
+    Each returned dict: {email, name, count}.
+    """
+    log = log or _noop
+    skip = set(SKIP_FOLDERS_DEFAULT)
+    skip.add("Sent Items")
+    counts: dict[str, dict] = {}
+    cutoff = datetime.now() - timedelta(days=30 * months_back)
+    date_filter = outlook_date_filter(cutoff)
+
+    scanned_folders = 0
+    scanned_items = 0
+    for store in namespace.Folders:
+        for folder in walk_folders(store, skip):
+            default_type = getattr(folder, "DefaultItemType", None)
+            if default_type is not None and default_type not in (OL_DEFAULT_MAIL, OL_DEFAULT_POST):
+                continue
+            try:
+                items = folder.Items
+                items.Sort("[ReceivedTime]", True)
+                filtered = items.Restrict(date_filter)
+            except Exception:
+                continue
+
+            scanned_folders += 1
+            item = filtered.GetFirst()
+            while item is not None:
+                try:
+                    if getattr(item, "Class", 0) == OL_MAIL:
+                        email = (getattr(item, "SenderEmailAddress", "") or "").strip()
+                        name = (getattr(item, "SenderName", "") or "").strip()
+                        key = email.lower()
+                        if key:
+                            entry = counts.setdefault(key, {"email": email, "name": name, "count": 0})
+                            entry["count"] += 1
+                            if name and not entry["name"]:
+                                entry["name"] = name
+                    scanned_items += 1
+                    if progress_cb and scanned_items % 100 == 0:
+                        if progress_cb(scanned_folders, scanned_items) is False:
+                            log("Sender scan cancelled.")
+                            return sorted(counts.values(),
+                                          key=lambda d: (-d["count"], d["email"]))
+                except Exception:
+                    pass
+                try:
+                    item = filtered.GetNext()
+                except Exception:
+                    break
+
+    log(f"Scanned {scanned_folders} folder(s), {scanned_items} email(s). "
+        f"Found {len(counts)} unique senders.")
+    return sorted(counts.values(), key=lambda d: (-d["count"], d["email"]))
 
 
 def save_item(item, emails_dir: Path, attachments_dir: Path, extract_attachments: bool, log: Logger, save_msg: bool = True) -> dict:
@@ -249,8 +330,9 @@ def save_item(item, emails_dir: Path, attachments_dir: Path, extract_attachments
 
 def scrape_outlook(
     *,
-    keywords: list[str],
+    keywords: list[str] | None = None,
     exclude_keywords: list[str] | None = None,
+    from_senders: list[str] | None = None,
     project_label: str = "Project Email Archive",
     months: int = 12,
     output: Path | str = Path("output"),
@@ -275,8 +357,10 @@ def scrape_outlook(
     summary_markdown, summary_md_path, summary_docx_path, errors.
     """
     log = log or _noop
-    if not keywords:
-        raise ValueError("At least one keyword is required.")
+    keywords = keywords or []
+    from_senders = from_senders or []
+    if not keywords and not from_senders:
+        raise ValueError("Supply at least one keyword or one sender filter.")
 
     skip = set(SKIP_FOLDERS_DEFAULT)
     if include_deleted:
@@ -308,7 +392,7 @@ def scrape_outlook(
     log(f"Skipping folders: {sorted(skip)}")
 
     matches = search_matches(
-        ns, keywords, exclude_keywords or [], cutoff,
+        ns, keywords, exclude_keywords or [], from_senders, cutoff,
         skip, include_folders_only, log,
     )
     log(f"Total unique matches: {len(matches)}")

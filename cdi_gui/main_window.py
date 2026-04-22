@@ -22,6 +22,7 @@ from ttkbootstrap.scrolled import ScrolledFrame
 from . import config as cfg
 from .outlook_info import list_outlook_accounts
 from .preview import PreviewDialog
+from .sender_picker import SenderPickerDialog
 from .wizard import WizardWindow
 
 
@@ -119,6 +120,20 @@ class MainWindow(tb.Window):
         self.exclude_txt = tb.Text(outer, height=3)
         self.exclude_txt.pack(fill="x", pady=(2, 10))
 
+        # From senders
+        from_label_row = tb.Frame(outer)
+        from_label_row.pack(fill="x")
+        tb.Label(from_label_row,
+                 text="From  (optional — one email or name per line; substring match)",
+                 font=("Segoe UI", 10, "bold")).pack(side="left")
+        self.pick_from_btn = tb.Button(
+            from_label_row, text="Pick from mailbox…", bootstyle=SECONDARY,
+            command=self._pick_senders,
+        )
+        self.pick_from_btn.pack(side="right")
+        self.from_txt = tb.Text(outer, height=3)
+        self.from_txt.pack(fill="x", pady=(2, 10))
+
         # Months + attachments + summary
         opts = tb.Frame(outer)
         opts.pack(fill="x", pady=(0, 10))
@@ -210,6 +225,7 @@ class MainWindow(tb.Window):
             "project": self.project_var.get().strip(),
             "keywords": self.keywords_txt.get("1.0", "end").strip(),
             "exclude": self.exclude_txt.get("1.0", "end").strip(),
+            "from_senders": self.from_txt.get("1.0", "end").strip(),
             "months": int(self.months_var.get()),
             "attachments": bool(self.attach_var.get()),
             "summary": bool(self.summary_var.get()),
@@ -227,6 +243,7 @@ class MainWindow(tb.Window):
         self.project_var.set(data.get("project", ""))
         self.keywords_txt.delete("1.0", "end"); self.keywords_txt.insert("1.0", data.get("keywords", ""))
         self.exclude_txt.delete("1.0", "end"); self.exclude_txt.insert("1.0", data.get("exclude", ""))
+        self.from_txt.delete("1.0", "end"); self.from_txt.insert("1.0", data.get("from_senders", ""))
         self.months_var.set(int(data.get("months", 12)))
         self.attach_var.set(bool(data.get("attachments", True)))
         self.summary_var.set(bool(data.get("summary", True)))
@@ -297,6 +314,77 @@ class MainWindow(tb.Window):
                 self.output_var.set(new_cfg["default_output"])
         WizardWindow(self, _done)
 
+    # ==================== SENDER PICKER ====================
+
+    def _pick_senders(self):
+        if self.running:
+            return
+        months = int(self.months_var.get())
+        self.pick_from_btn.configure(state="disabled", text="Scanning mailbox…")
+        self._log(f"Scanning recent senders from last {months} months …")
+        threading.Thread(
+            target=self._senders_worker, args=(months,), daemon=True,
+        ).start()
+
+    def _senders_worker(self, months: int):
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception as e:
+            self.log_queue.put(("SENDERS_FAIL", str(e)))
+            return
+        try:
+            import win32com.client
+            from scrape_outlook_local import list_recent_senders
+
+            app = win32com.client.Dispatch("Outlook.Application")
+            ns = app.GetNamespace("MAPI")
+
+            def progress(folders, items):
+                self.log_queue.put(
+                    ("LOG", f"  sender scan: {folders} folders, {items} emails so far"))
+                return True
+
+            senders = list_recent_senders(
+                ns, months_back=months,
+                log=lambda m: self.log_queue.put(("LOG", m)),
+                progress_cb=progress,
+            )
+            self.log_queue.put(("SENDERS_OK", senders))
+        except Exception as e:
+            self.log_queue.put(("SENDERS_FAIL", str(e)))
+        finally:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+
+    def _show_sender_picker(self, senders: list[dict]):
+        self.pick_from_btn.configure(state="normal", text="Pick from mailbox…")
+        if not senders:
+            messagebox.showinfo("No senders", "No senders were found. "
+                                              "Is Outlook running and signed in?")
+            return
+        dialog = SenderPickerDialog(self, senders)
+        self.wait_window(dialog)
+        picks = dialog.result()
+        if not picks:
+            return
+        existing = self.from_txt.get("1.0", "end").strip().splitlines()
+        existing_set = {e.strip().lower() for e in existing if e.strip()}
+        to_add = [p for p in picks if p.lower() not in existing_set]
+        if not to_add:
+            self._log("All picked senders were already in the From field.")
+            return
+        merged = [e for e in existing if e.strip()] + to_add
+        self.from_txt.delete("1.0", "end")
+        self.from_txt.insert("1.0", "\n".join(merged))
+        self._log(f"Added {len(to_add)} sender(s) to the From field.")
+
+    def _sender_scan_failed(self, err: str):
+        self.pick_from_btn.configure(state="normal", text="Pick from mailbox…")
+        messagebox.showerror("Sender scan failed", err)
+
     # ==================== RUN (threaded) ====================
 
     def _on_run(self):
@@ -307,10 +395,14 @@ class MainWindow(tb.Window):
             messagebox.showerror("Missing info", "Enter a project name.")
             return
         keywords = [k.strip() for k in data["keywords"].splitlines() if k.strip()]
-        if not keywords:
-            messagebox.showerror("Missing info", "Enter at least one keyword.")
-            return
         excludes = [e.strip() for e in data["exclude"].splitlines() if e.strip()]
+        senders = [s.strip() for s in data["from_senders"].splitlines() if s.strip()]
+        if not keywords and not senders:
+            messagebox.showerror(
+                "Missing info",
+                "Enter at least one keyword, or pick one or more senders.",
+            )
+            return
         only_folders = [s.strip() for s in data["only_folders"].split(",") if s.strip()] or None
 
         if data["summary"] and not (self.app_config.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY")):
@@ -336,11 +428,11 @@ class MainWindow(tb.Window):
 
         threading.Thread(
             target=self._run_worker,
-            args=(keywords, excludes, data, only_folders, output_dir),
+            args=(keywords, excludes, senders, data, only_folders, output_dir),
             daemon=True,
         ).start()
 
-    def _run_worker(self, keywords, excludes, data, only_folders, output_dir: Path):
+    def _run_worker(self, keywords, excludes, senders, data, only_folders, output_dir: Path):
         try:
             import pythoncom  # COM must be initialised per-thread
             pythoncom.CoInitialize()
@@ -368,6 +460,7 @@ class MainWindow(tb.Window):
             result = scrape_outlook(
                 keywords=keywords,
                 exclude_keywords=excludes,
+                from_senders=senders,
                 project_label=data["project"],
                 months=data["months"],
                 output=output_dir,
@@ -417,6 +510,10 @@ class MainWindow(tb.Window):
                     self._show_preview()
                 elif kind == "DONE":
                     self._finish(payload)
+                elif kind == "SENDERS_OK":
+                    self._show_sender_picker(payload)
+                elif kind == "SENDERS_FAIL":
+                    self._sender_scan_failed(payload)
         except queue.Empty:
             pass
         self.after(100, self._poll_log_queue)
