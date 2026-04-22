@@ -14,15 +14,27 @@ from pathlib import Path
 
 block_cipher = None
 
-# Pandoc binary bundled by pypandoc-binary needs to ship with the app.
+# Pandoc binary is only a fallback renderer now — the CDI-branded Word
+# doc is produced by python-docx (pure Python, no external binaries).
+# If pypandoc-binary is installed AND its bundled pandoc file is
+# actually at the expected location, ship it too for belt-and-braces;
+# otherwise skip silently.
 datas = []
 try:
     import pypandoc
-    pandoc_path = Path(pypandoc.get_pandoc_path())
-    datas.append((str(pandoc_path), "pypandoc/files"))
-except Exception:
-    # If pypandoc isn't available at build time, just skip — user can install it at runtime.
-    pass
+    p = Path(pypandoc.get_pandoc_path())
+    # pypandoc on Windows sometimes returns the path without .exe
+    if not p.exists() and sys.platform == "win32":
+        if p.with_suffix(".exe").exists():
+            p = p.with_suffix(".exe")
+    if p.exists() and p.is_file():
+        datas.append((str(p), "pypandoc/files"))
+        print(f"[spec] Bundling pandoc from {p}")
+    else:
+        print(f"[spec] pandoc not found at {p} — skipping pandoc bundle "
+              f"(python-docx handles the normal path).")
+except Exception as e:
+    print(f"[spec] pypandoc not available ({e}) — skipping pandoc bundle.")
 
 # Ship branding assets (logo, etc.) if present.
 assets_dir = Path("cdi_gui/assets")
