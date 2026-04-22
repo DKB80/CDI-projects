@@ -102,37 +102,41 @@ def summarize_emails(
     return "".join(b.text for b in resp.content if b.type == "text")
 
 
-def render_docx(markdown_text: str, dest: Path) -> bool:
-    """Convert markdown briefing to a Word .docx via Pandoc.
+def render_docx(markdown_text: str, dest: Path,
+                project: str | None = None,
+                period: str | None = None) -> bool:
+    """Convert markdown briefing to a CDI-branded Word .docx.
 
-    Returns True on success, False if pypandoc/pandoc isn't available
-    (caller can keep the .md and move on).
+    Primary path: cdi_gui.report_docx (python-docx, full CDI styling spec).
+    Fallback: Pandoc via pypandoc, if python-docx isn't available.
+
+    Returns True on success, False if both paths fail.
     """
     try:
-        import pypandoc
-    except ImportError:
-        print(
-            "  pypandoc not installed — skipping .docx (pip install pypandoc-binary).",
-            file=sys.stderr,
-        )
-        return False
+        from cdi_gui.report_docx import render_cdi_briefing
+        try:
+            render_cdi_briefing(markdown_text, dest,
+                                project=project or "Project", period=period)
+            return True
+        except Exception as e:
+            print(f"  CDI docx renderer failed, falling back to Pandoc: {e}",
+                  file=sys.stderr)
+    except ImportError as e:
+        print(f"  CDI docx renderer unavailable ({e}); trying Pandoc fallback.",
+              file=sys.stderr)
 
     try:
+        import pypandoc
         pypandoc.convert_text(
-            markdown_text,
-            to="docx",
-            format="gfm",  # GitHub-Flavored Markdown — handles pipe tables
-            outputfile=str(dest),
-            extra_args=["--standalone"],
+            markdown_text, to="docx", format="gfm",
+            outputfile=str(dest), extra_args=["--standalone"],
         )
         return True
+    except ImportError:
+        print("  pypandoc not installed either — skipping .docx.", file=sys.stderr)
+        return False
     except OSError as e:
-        # pypandoc raises OSError when the pandoc binary itself is missing.
-        print(
-            f"  Pandoc binary not found: {e}\n"
-            "  Install with: pip install pypandoc-binary",
-            file=sys.stderr,
-        )
+        print(f"  Pandoc binary not found: {e}", file=sys.stderr)
         return False
     except Exception as e:
         print(f"  .docx conversion failed: {e}", file=sys.stderr)

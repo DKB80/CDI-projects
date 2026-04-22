@@ -358,7 +358,8 @@ def main() -> int:
     print(f"Summary (markdown): {summary_md}")
 
     summary_docx = args.output / "SUMMARY.docx"
-    if render_docx(summary, summary_docx):
+    if render_docx(summary, summary_docx, project=args.project,
+                   period=f"last {args.months} months"):
         print(f"Summary (Word):     {summary_docx}")
     return 0
 

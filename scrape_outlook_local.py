@@ -413,7 +413,8 @@ def scrape_outlook(
     log(f"Summary (markdown): {summary_md}")
 
     summary_docx = output / "SUMMARY.docx"
-    if render_docx(summary, summary_docx):
+    if render_docx(summary, summary_docx, project=project_label,
+                   period=f"last {months} months"):
         result["summary_docx_path"] = str(summary_docx)
         log(f"Summary (Word):     {summary_docx}")
 
