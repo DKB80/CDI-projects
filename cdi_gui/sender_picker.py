@@ -32,11 +32,14 @@ class SenderPickerDialog(tb.Toplevel):
             outer, font=("Segoe UI", 14, "bold"),
             text=f"{len(self.senders)} unique senders in the last 12 months",
         ).pack(anchor="w")
-        tb.Label(outer, bootstyle=SECONDARY, text=(
-            "Tick who the scrape should filter on. Matching is a substring "
-            "check on email OR display name — e.g. picking 'hossein.sarmadian@…' "
-            "also matches emails sent from shared boxes that include 'hossein' "
-            "in the display name."
+        tb.Label(outer, bootstyle=SECONDARY, wraplength=780, text=(
+            "Click a row to tick or untick it (a ✓ will appear on the left). "
+            "Use the filter box below to search. Matching in the scrape is a "
+            "substring check on email OR display name, so picking "
+            "'hossein.sarmadian@…' also catches shared boxes whose display "
+            "name contains 'hossein'. When you're done, click 'Use selected' "
+            "at the bottom — the ticked addresses will be added to the From "
+            "field on the main window."
         )).pack(anchor="w", pady=(0, 12))
 
         # Search box
@@ -88,8 +91,9 @@ class SenderPickerDialog(tb.Toplevel):
         self.count_label.pack(side="left")
         tb.Button(bar, text="Cancel", bootstyle=DANGER,
                   command=self._cancel).pack(side="right")
-        tb.Button(bar, text="Use selected", bootstyle=PRIMARY,
-                  command=self._confirm).pack(side="right", padx=(0, 6))
+        self.use_btn = tb.Button(bar, text="Use selected", bootstyle=PRIMARY,
+                                 command=self._confirm)
+        self.use_btn.pack(side="right", padx=(0, 6))
 
         self._update_count()
 
@@ -109,13 +113,12 @@ class SenderPickerDialog(tb.Toplevel):
 
     def _on_click(self, event):
         row_id = self.tree.identify_row(event.y)
-        col = self.tree.identify_column(event.x)
         if not row_id:
             return
-        # Clicking the tick column toggles; clicking elsewhere only selects.
-        if col == "#1":
-            self._toggle(row_id)
-            return "break"
+        # Click anywhere on a row toggles its tick — more intuitive than
+        # requiring the user to hit the tiny ✓ column.
+        self._toggle(row_id)
+        return "break"
 
     def _on_space(self, _event):
         for row_id in self.tree.selection():
@@ -144,9 +147,15 @@ class SenderPickerDialog(tb.Toplevel):
         self._update_count()
 
     def _update_count(self):
+        n = len(self._ticked)
         self.count_label.configure(
-            text=f"{len(self._ticked)} ticked of {len(self.senders)} senders"
+            text=f"{n} ticked of {len(self.senders)} senders"
         )
+        if hasattr(self, "use_btn"):
+            self.use_btn.configure(
+                text=f"Use selected  ({n})" if n else "Use selected",
+                state="normal" if n else "disabled",
+            )
 
     def _confirm(self):
         # Return original-case emails for everything ticked.
