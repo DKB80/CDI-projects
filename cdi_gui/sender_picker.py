@@ -8,7 +8,7 @@ import tkinter as tk
 from tkinter import ttk
 
 import ttkbootstrap as tb
-from ttkbootstrap.constants import DANGER, PRIMARY, SECONDARY
+from ttkbootstrap.constants import DANGER, PRIMARY, SECONDARY, SUCCESS
 
 
 class SenderPickerDialog(tb.Toplevel):
@@ -17,7 +17,7 @@ class SenderPickerDialog(tb.Toplevel):
     def __init__(self, parent, senders: list[dict]):
         super().__init__(parent)
         self.title("Pick senders to filter on")
-        self.geometry("840x560")
+        self.geometry("820x520")
         self.senders = senders
         self._selected: list[str] | None = None
         self._build()
@@ -30,17 +30,28 @@ class SenderPickerDialog(tb.Toplevel):
 
         tb.Label(
             outer, font=("Segoe UI", 14, "bold"),
-            text=f"{len(self.senders)} unique senders in the last 12 months",
+            text=f"{len(self.senders)} unique senders found",
         ).pack(anchor="w")
         tb.Label(outer, bootstyle=SECONDARY, wraplength=780, text=(
-            "Click a row to tick or untick it (a ✓ will appear on the left). "
-            "Use the filter box below to search. Matching in the scrape is a "
-            "substring check on email OR display name, so picking "
-            "'hossein.sarmadian@…' also catches shared boxes whose display "
-            "name contains 'hossein'. When you're done, click 'Use selected' "
-            "at the bottom — the ticked addresses will be added to the From "
-            "field on the main window."
-        )).pack(anchor="w", pady=(0, 12))
+            "Click a row to tick or untick it (a ✓ appears on the left). "
+            "Click the green 'Use selected' button when done — the ticked "
+            "addresses will be added to the From field on the main window "
+            "and this dialog will close automatically."
+        )).pack(anchor="w", pady=(0, 10))
+
+        # Primary action bar — at the TOP so it's always visible.
+        action_bar = tb.Frame(outer)
+        action_bar.pack(fill="x", pady=(0, 12))
+        self.use_btn = tb.Button(
+            action_bar, text="Use selected", bootstyle=SUCCESS,
+            command=self._confirm, padding=(16, 10),
+        )
+        self.use_btn.pack(side="left")
+        tb.Button(action_bar, text="Cancel", bootstyle=DANGER,
+                  command=self._cancel, padding=(10, 10)
+                  ).pack(side="left", padx=(8, 0))
+        self.count_label = tb.Label(action_bar, text="", bootstyle=SECONDARY)
+        self.count_label.pack(side="left", padx=(16, 0))
 
         # Search box
         search_row = tb.Frame(outer)
@@ -83,18 +94,6 @@ class SenderPickerDialog(tb.Toplevel):
 
         self._ticked: set[str] = set()
         self._refresh()
-
-        # Footer
-        bar = tb.Frame(outer)
-        bar.pack(fill="x", pady=(12, 0))
-        self.count_label = tb.Label(bar, text="")
-        self.count_label.pack(side="left")
-        tb.Button(bar, text="Cancel", bootstyle=DANGER,
-                  command=self._cancel).pack(side="right")
-        self.use_btn = tb.Button(bar, text="Use selected", bootstyle=PRIMARY,
-                                 command=self._confirm)
-        self.use_btn.pack(side="right", padx=(0, 6))
-
         self._update_count()
 
     # ----- helpers -----
