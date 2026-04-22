@@ -17,6 +17,7 @@ from tkinter import filedialog, messagebox, simpledialog
 
 import ttkbootstrap as tb
 from ttkbootstrap.constants import DANGER, INFO, PRIMARY, SECONDARY, SUCCESS, WARNING
+from ttkbootstrap.scrolled import ScrolledFrame
 
 from . import config as cfg
 from .outlook_info import list_outlook_accounts
@@ -81,8 +82,9 @@ class MainWindow(tb.Window):
                   command=self._open_wizard).pack(side="right")
 
     def _build_form(self):
-        outer = tb.Frame(self, padding=20)
-        outer.pack(fill="both", expand=False)
+        # Scrollable form — keeps the app usable at any window size.
+        outer = ScrolledFrame(self, autohide=True, padding=20, height=440)
+        outer.pack(fill="both", expand=True)
 
         # Presets row
         presets_row = tb.Frame(outer)
@@ -137,6 +139,14 @@ class MainWindow(tb.Window):
         tb.Checkbutton(opts, variable=self.dl_copy_var,
                        text="Also copy Word doc to Downloads").pack(side="left")
 
+        # Second options row
+        opts2 = tb.Frame(outer)
+        opts2.pack(fill="x", pady=(0, 10))
+        self.save_msg_var = tb.BooleanVar(value=True)
+        tb.Checkbutton(opts2, variable=self.save_msg_var,
+                       text="Save full .msg copies of every email  (untick for a faster 'summary only' run)"
+                       ).pack(side="left")
+
         # Output folder
         out_row = tb.Frame(outer)
         out_row.pack(fill="x", pady=(0, 10))
@@ -156,6 +166,9 @@ class MainWindow(tb.Window):
         self.junk_var = tb.BooleanVar(value=False)
         tb.Checkbutton(adv, variable=self.junk_var,
                        text="Include Junk Email folder").pack(anchor="w")
+        self.exclude_sent_var = tb.BooleanVar(value=False)
+        tb.Checkbutton(adv, variable=self.exclude_sent_var,
+                       text="Exclude Sent Items (only search emails you received)").pack(anchor="w")
 
         r = tb.Frame(adv)
         r.pack(fill="x", pady=(6, 0))
@@ -201,9 +214,11 @@ class MainWindow(tb.Window):
             "attachments": bool(self.attach_var.get()),
             "summary": bool(self.summary_var.get()),
             "dl_copy": bool(self.dl_copy_var.get()),
+            "save_msg": bool(self.save_msg_var.get()),
             "output": self.output_var.get().strip(),
             "include_deleted": bool(self.deleted_var.get()),
             "include_junk": bool(self.junk_var.get()),
+            "exclude_sent": bool(self.exclude_sent_var.get()),
             "only_folders": self.only_folders_var.get().strip(),
             "max_summary": int(self.max_sum_var.get()),
         }
@@ -219,8 +234,10 @@ class MainWindow(tb.Window):
         self.output_var.set(data.get("output", str(cfg.DEFAULT_OUTPUT_ROOT)))
         self.deleted_var.set(bool(data.get("include_deleted", False)))
         self.junk_var.set(bool(data.get("include_junk", False)))
+        self.exclude_sent_var.set(bool(data.get("exclude_sent", False)))
         self.only_folders_var.set(data.get("only_folders", ""))
         self.max_sum_var.set(int(data.get("max_summary", 200)))
+        self.save_msg_var.set(bool(data.get("save_msg", True)))
 
     def _load_selected_preset(self):
         name = self.preset_var.get().strip()
@@ -346,6 +363,8 @@ class MainWindow(tb.Window):
                 self.preview_event.wait()
                 return self.preview_response
 
+            extra_exclude = ["Sent Items"] if data["exclude_sent"] else None
+
             result = scrape_outlook(
                 keywords=keywords,
                 exclude_keywords=excludes,
@@ -354,8 +373,10 @@ class MainWindow(tb.Window):
                 output=output_dir,
                 include_deleted=data["include_deleted"],
                 include_junk=data["include_junk"],
+                extra_exclude_folders=extra_exclude,
                 include_folders_only=only_folders,
                 skip_attachments=not data["attachments"],
+                save_msg_files=data["save_msg"],
                 generate_summary=data["summary"],
                 max_emails_for_summary=data["max_summary"],
                 log=log_cb,

@@ -200,7 +200,7 @@ def search_matches(
     return matches
 
 
-def save_item(item, emails_dir: Path, attachments_dir: Path, extract_attachments: bool, log: Logger) -> dict:
+def save_item(item, emails_dir: Path, attachments_dir: Path, extract_attachments: bool, log: Logger, save_msg: bool = True) -> dict:
     received = item.ReceivedTime
     date_str = received.strftime("%Y-%m-%d")
     sender = (
@@ -210,11 +210,13 @@ def save_item(item, emails_dir: Path, attachments_dir: Path, extract_attachments
     )
     subject = item.Subject or "no_subject"
 
-    base_name = sanitize_filename(f"{date_str}__{sender}__{subject}")
-    msg_path = emails_dir / (base_name + ".msg")
-    if msg_path.exists():
-        msg_path = emails_dir / (base_name + "__" + item.EntryID[-8:] + ".msg")
-    item.SaveAs(str(msg_path), OL_SAVE_MSG)
+    msg_path: Path | None = None
+    if save_msg:
+        base_name = sanitize_filename(f"{date_str}__{sender}__{subject}")
+        msg_path = emails_dir / (base_name + ".msg")
+        if msg_path.exists():
+            msg_path = emails_dir / (base_name + "__" + item.EntryID[-8:] + ".msg")
+        item.SaveAs(str(msg_path), OL_SAVE_MSG)
 
     saved_attachments: list[str] = []
     if extract_attachments and item.Attachments.Count > 0:
@@ -239,7 +241,7 @@ def save_item(item, emails_dir: Path, attachments_dir: Path, extract_attachments
         "to": item.To or "",
         "cc": item.CC or "",
         "subject": subject,
-        "msg": str(msg_path),
+        "msg": str(msg_path) if msg_path else None,
         "attachments": saved_attachments,
         "body": item.Body or "",
     }
@@ -257,6 +259,7 @@ def scrape_outlook(
     extra_exclude_folders: list[str] | None = None,
     include_folders_only: list[str] | None = None,
     skip_attachments: bool = False,
+    save_msg_files: bool = True,
     generate_summary: bool = True,
     max_emails_for_summary: int = 200,
     log: Logger | None = None,
@@ -363,7 +366,7 @@ def scrape_outlook(
     consecutive_failures = 0
     for i, item in enumerate(matches, 1):
         try:
-            entry = save_item(item, emails_dir, attachments_dir, not skip_attachments, log)
+            entry = save_item(item, emails_dir, attachments_dir, not skip_attachments, log, save_msg=save_msg_files)
             index.append(entry)
             consecutive_failures = 0
         except Exception as e:

@@ -155,6 +155,22 @@ class WizardWindow(tb.Toplevel):
             "you're good."
         )).pack(anchor="w")
 
+        help_box = tb.Text(self.container, wrap="word", height=8, relief="flat")
+        help_box.insert("1.0",
+            "How to open Classic Outlook:\n\n"
+            "  1. Press the Windows key and type 'Outlook'. In the results, "
+            "look for 'Outlook (classic)' or just 'Outlook' (the one with "
+            "the icon of a blue envelope-style letter, not the new-style O).\n\n"
+            "  2. If the app opens and shows a toggle at the top-right that "
+            "says 'Try the new Outlook' — leave it OFF. When that toggle is "
+            "ON, the app is the New Outlook which does NOT work with this tool.\n\n"
+            "  3. If you can only find 'New Outlook' in your Start menu, ask "
+            "CDI IT to install Classic Outlook alongside, or search for "
+            "'outlook.exe' under C:\\Program Files\\Microsoft Office\\."
+        )
+        help_box.configure(state="disabled")
+        help_box.pack(fill="x", pady=(8, 0))
+
         self.status_frame = tb.Frame(self.container, padding=12)
         self.status_frame.pack(fill="x", pady=12)
 
