@@ -422,12 +422,17 @@ class MainWindow(tb.Window):
         only_folders = [s.strip() for s in data["only_folders"].split(",") if s.strip()] or None
 
         if data["summary"] and not (self.app_config.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY")):
-            messagebox.showwarning(
-                "No API key",
-                "You selected 'Generate Claude summary' but no API key is set. "
-                "Open Settings to add one, or untick the summary option to run without it."
-            )
-            return
+            if not messagebox.askyesno(
+                "No API key set",
+                "You're running with 'Generate Claude summary' ticked but no "
+                "Anthropic API key is configured.\n\n"
+                "The tool will still produce an OFFLINE briefing document "
+                "(stats, sender breakdown, attachments) using the same CDI "
+                "template — the AI-only sections (decisions, action items, "
+                "risks) will show a 'Re-run with internet' placeholder.\n\n"
+                "Continue with an offline briefing?",
+            ):
+                return
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_proj = "".join(c if c.isalnum() or c in "-_ " else "_" for c in data["project"]).strip()
@@ -568,14 +573,20 @@ class MainWindow(tb.Window):
 
         match_count = result.get("match_count", 0)
         saved_count = result.get("saved_count", 0)
+        summary_type = result.get("summary_type")
         lines = [
             f"Matches found:       {match_count}",
             f"Emails saved:        {saved_count}",
         ]
+        if summary_type == "ai":
+            lines.append("Summary:             AI-generated (Claude Opus 4.7)")
+        elif summary_type == "offline":
+            lines.append("Summary:             Offline (no internet / no API key)")
+            lines.append("                     AI sections blank — re-run online for full briefing.")
         if result.get("summary_md_path"):
-            lines.append(f"Markdown summary:    {result['summary_md_path']}")
+            lines.append(f"Markdown:            {result['summary_md_path']}")
         if result.get("summary_docx_path"):
-            lines.append(f"Word summary:        {result['summary_docx_path']}")
+            lines.append(f"Word doc:            {result['summary_docx_path']}")
         if result.get("downloads_copy_path"):
             lines.append(f"Copied to Downloads: {result['downloads_copy_path']}")
         msg = "\n".join(lines)

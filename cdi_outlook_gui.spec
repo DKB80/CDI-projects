@@ -24,6 +24,11 @@ except Exception:
     # If pypandoc isn't available at build time, just skip — user can install it at runtime.
     pass
 
+# Ship branding assets (logo, etc.) if present.
+assets_dir = Path("cdi_gui/assets")
+if assets_dir.exists():
+    datas.append((str(assets_dir), "cdi_gui/assets"))
+
 a = Analysis(
     ["cdi_outlook_gui.py"],
     pathex=[],
@@ -35,6 +40,18 @@ a = Analysis(
         "anthropic",
         "pypandoc",
         "ttkbootstrap",
+        "docx",
+        "cdi_gui",
+        "cdi_gui.main_window",
+        "cdi_gui.wizard",
+        "cdi_gui.preview",
+        "cdi_gui.sender_picker",
+        "cdi_gui.config",
+        "cdi_gui.outlook_info",
+        "cdi_gui.offline_summary",
+        "cdi_gui.report_docx",
+        "scrape_outlook_local",
+        "summarize",
     ],
     hookspath=[],
     hooksconfig={},

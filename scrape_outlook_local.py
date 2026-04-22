@@ -541,26 +541,47 @@ def scrape_outlook(
 
     if not generate_summary:
         return result
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        result["errors"].append("ANTHROPIC_API_KEY not set — summary skipped.")
-        log("ANTHROPIC_API_KEY not set — skipping summary.")
-        return result
 
     sample = index[-max_emails_for_summary:] if len(index) > max_emails_for_summary else index
-    log(f"Generating summary with Claude Opus 4.7 ({len(sample)} emails)...")
-    summary = summarize_emails(sample, keywords, project_label=project_label)
+
+    # Try Claude first. Fall back to a local briefing if the API key is
+    # missing, the network is unreachable, or the call errors out.
+    summary: str | None = None
+    summary_type: str | None = None
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    if api_key:
+        try:
+            log(f"Generating AI summary with Claude Opus 4.7 ({len(sample)} emails)...")
+            summary = summarize_emails(sample, keywords, project_label=project_label)
+            summary_type = "ai"
+        except Exception as e:
+            log(f"AI summary failed ({e}); falling back to offline briefing.")
+            result["errors"].append(f"AI summary failed: {e}")
+    else:
+        log("No ANTHROPIC_API_KEY — generating offline briefing (no AI analysis).")
+
+    if summary is None:
+        from cdi_gui.offline_summary import build_offline_briefing
+        summary = build_offline_briefing(
+            sample, project_label, keywords,
+            exclude_keywords=exclude_keywords, months=months,
+        )
+        summary_type = "offline"
+
+    result["summary_type"] = summary_type
     result["summary_markdown"] = summary
 
     summary_md = output / "SUMMARY.md"
     summary_md.write_text(summary, encoding="utf-8")
     result["summary_md_path"] = str(summary_md)
-    log(f"Summary (markdown): {summary_md}")
+    log(f"Summary (markdown, {summary_type}): {summary_md}")
 
     summary_docx = output / "SUMMARY.docx"
     if render_docx(summary, summary_docx, project=project_label,
                    period=f"last {months} months"):
         result["summary_docx_path"] = str(summary_docx)
-        log(f"Summary (Word):     {summary_docx}")
+        log(f"Summary (Word, {summary_type}): {summary_docx}")
 
     return result
 
