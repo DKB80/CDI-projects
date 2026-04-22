@@ -91,6 +91,44 @@ OL_SAVE_MSG = 9
 
 MAX_FILENAME_LEN = 120
 
+# Emails whose local part matches these are treated as system / automated
+# senders and skipped by the sender picker. Real person email addresses
+# using 'info', 'support', 'admin' etc. are intentionally NOT listed — those
+# are often shared inboxes the user might legitimately want to filter on.
+_SYSTEM_LOCAL_PARTS = frozenset({
+    "no-reply", "noreply", "no_reply", "nr",
+    "donotreply", "do-not-reply", "do_not_reply",
+    "mailer-daemon", "mailerdaemon", "mailer_daemon",
+    "postmaster",
+    "bounce", "bounces", "bounce-notice",
+    "auto-reply", "autoreply", "automated",
+    "notifications", "notification", "notify",
+    "alerts", "alert", "alarm", "alarms",
+    "news", "newsletter", "digest",
+    "system", "sys", "root", "daemon",
+    "unsubscribe", "subscribe",
+})
+
+# If any of these substrings appears anywhere in the local part, skip.
+# Handles compound locals like 'linkedin-noreply', 'sharepoint-notifications'.
+_SYSTEM_LOCAL_SUBSTRINGS = (
+    "noreply", "no-reply", "no_reply",
+    "donotreply", "do-not-reply", "do_not_reply",
+    "mailer-daemon", "mailerdaemon", "mailer_daemon",
+    "-bounce", "-bounces",
+)
+
+
+def _is_system_sender_email(email: str) -> bool:
+    """True if the email looks like an automated / no-reply sender."""
+    if not email or "@" not in email:
+        return False
+    local = email.split("@", 1)[0].lower().strip()
+    if local in _SYSTEM_LOCAL_PARTS:
+        return True
+    return any(sub in local for sub in _SYSTEM_LOCAL_SUBSTRINGS)
+
+
 Logger = Callable[[str], None]
 
 
@@ -240,12 +278,14 @@ def list_recent_senders(
 
     scanned_folders = 0
     scanned_items = 0
+    system_skipped = 0
     hit_cap = False
 
     def _finish() -> list[dict]:
         status = "cancelled" if hit_cap else "done"
         log(f"Sender scan {status}: {scanned_folders} folder(s), "
-            f"{scanned_items} email(s), {len(counts)} unique senders"
+            f"{scanned_items} email(s), {len(counts)} unique senders, "
+            f"skipped {system_skipped} automated/no-reply"
             + (f" (capped at {max_items})" if hit_cap else ""))
         return sorted(counts.values(), key=lambda d: (-d["count"], d["email"]))
 
@@ -279,10 +319,13 @@ def list_recent_senders(
                         name = (getattr(item, "SenderName", "") or "").strip()
                         key = email.lower()
                         if key:
-                            entry = counts.setdefault(key, {"email": email, "name": name, "count": 0})
-                            entry["count"] += 1
-                            if name and not entry["name"]:
-                                entry["name"] = name
+                            if _is_system_sender_email(email):
+                                system_skipped += 1
+                            else:
+                                entry = counts.setdefault(key, {"email": email, "name": name, "count": 0})
+                                entry["count"] += 1
+                                if name and not entry["name"]:
+                                    entry["name"] = name
                     scanned_items += 1
                     if progress_cb and scanned_items % 100 == 0:
                         if progress_cb(scanned_folders, scanned_items) is False:
