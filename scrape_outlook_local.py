@@ -256,12 +256,15 @@ def search_matches(
 
 
 def list_recent_senders(
-    namespace,
+    namespace=None,
     months_back: int = 12,
     max_items: int = 1000,
     log: Logger | None = None,
     progress_cb: Callable[[int, int], bool] | None = None,
 ) -> list[dict]:
+    if namespace is None:
+        app = win32com.client.Dispatch("Outlook.Application")
+        namespace = app.GetNamespace("MAPI")
     """Walk mail folders (minus Sent Items) and return unique senders from
     the most-recent `max_items` messages, sorted by frequency.
 

@@ -17,7 +17,7 @@ REM ============================================================
 cd /d "%~dp0"
 
 echo === Making sure PyInstaller is installed ===
-pip install --upgrade pyinstaller >nul
+python -m pip install --upgrade pyinstaller >nul
 if errorlevel 1 (
     echo.
     echo ERROR: couldn't install PyInstaller. Check your Python setup.
@@ -32,7 +32,7 @@ if exist "dist\CDI Outlook Briefing Tool" rmdir /s /q "dist\CDI Outlook Briefing
 
 echo.
 echo === Building .exe (this takes 2-5 minutes the first time) ===
-pyinstaller cdi_outlook_gui.spec
+python -m PyInstaller cdi_outlook_gui.spec
 if errorlevel 1 (
     echo.
     echo Build failed. Scroll up for the PyInstaller error.

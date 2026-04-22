@@ -342,19 +342,17 @@ class MainWindow(tb.Window):
             target=self._senders_worker, args=(months,), daemon=True,
         ).start()
 
-    def _senders_worker(self, months: int):
-        try:
-            import pythoncom
-            pythoncom.CoInitialize()
-        except Exception as e:
-            self.log_queue.put(("SENDERS_FAIL", str(e)))
-            return
-        try:
-            import win32com.client
-            from scrape_outlook_local import list_recent_senders
 
-            app = win32com.client.Dispatch("Outlook.Application")
-            ns = app.GetNamespace("MAPI")
+    def _senders_worker(self, months: int):
+        if sys.platform == "win32":
+            try:
+                import pythoncom
+                pythoncom.CoInitialize()
+            except Exception as e:
+                self.log_queue.put(("SENDERS_FAIL", str(e)))
+                return
+        try:
+            from outlook_backend import list_recent_senders
 
             def progress(folders, items):
                 self.log_queue.put(
@@ -362,7 +360,7 @@ class MainWindow(tb.Window):
                 return True
 
             senders = list_recent_senders(
-                ns, months_back=months,
+                months_back=months,
                 log=lambda m: self.log_queue.put(("LOG", m)),
                 progress_cb=progress,
             )
@@ -370,10 +368,11 @@ class MainWindow(tb.Window):
         except Exception as e:
             self.log_queue.put(("SENDERS_FAIL", str(e)))
         finally:
-            try:
-                pythoncom.CoUninitialize()
-            except Exception:
-                pass
+            if sys.platform == "win32":
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
 
     def _show_sender_picker(self, senders: list[dict]):
         self.pick_from_btn.configure(state="normal", text="Pick from mailbox…")
@@ -454,16 +453,17 @@ class MainWindow(tb.Window):
         ).start()
 
     def _run_worker(self, keywords, excludes, senders, data, only_folders, output_dir: Path):
-        try:
-            import pythoncom  # COM must be initialised per-thread
-            pythoncom.CoInitialize()
-        except Exception as e:
-            self.log_queue.put(("DONE", {"errors": [f"COM init failed: {e}"]}))
-            return
+        # COM apartment init is needed on Windows; no-op on other platforms.
+        if sys.platform == "win32":
+            try:
+                import pythoncom
+                pythoncom.CoInitialize()
+            except Exception as e:
+                self.log_queue.put(("DONE", {"errors": [f"COM init failed: {e}"]}))
+                return
 
         try:
-            # Lazy import to keep GUI startup fast
-            from scrape_outlook_local import scrape_outlook
+            from outlook_backend import scrape_outlook
 
             def log_cb(msg: str) -> None:
                 self.log_queue.put(("LOG", msg))
@@ -514,10 +514,11 @@ class MainWindow(tb.Window):
         except Exception as e:
             self.log_queue.put(("DONE", {"errors": [f"Scrape failed: {e}"]}))
         finally:
-            try:
-                pythoncom.CoUninitialize()
-            except Exception:
-                pass
+            if sys.platform == "win32":
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
 
     # ==================== LOG POLL ====================
 
