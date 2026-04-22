@@ -209,7 +209,11 @@ class MainWindow(tb.Window):
         self.open_dl_btn = tb.Button(runbar, text="Open Downloads folder", bootstyle=SECONDARY,
                                      command=lambda: self._open_folder(cfg.DOWNLOADS_DIR))
         self.open_dl_btn.pack(side="left", padx=(8, 0))
+        self.open_report_btn = tb.Button(runbar, text="Open Word report", bootstyle=INFO,
+                                         command=self._open_last_report, state="disabled")
+        self.open_report_btn.pack(side="left", padx=(8, 0))
         self.last_output_dir: Path | None = None
+        self.last_report_path: Path | None = None
 
     def _build_log(self):
         outer = tb.Frame(self, padding=(20, 0, 20, 20))
@@ -306,6 +310,18 @@ class MainWindow(tb.Window):
     def _open_last_output(self):
         if self.last_output_dir:
             self._open_folder(self.last_output_dir)
+
+    def _open_last_report(self):
+        if not self.last_report_path or not self.last_report_path.exists():
+            messagebox.showwarning("No report", "No Word report available yet.")
+            return
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(self.last_report_path))  # noqa: SIM115
+            else:
+                subprocess.Popen(["xdg-open", str(self.last_report_path)])
+        except Exception as e:
+            messagebox.showerror("Couldn't open report", str(e))
 
     def _open_wizard(self):
         def _done(new_cfg):
@@ -544,6 +560,11 @@ class MainWindow(tb.Window):
         if result.get("emails_dir"):
             self.last_output_dir = Path(result["emails_dir"]).parent
             self.open_out_btn.configure(state="normal")
+
+        report = result.get("downloads_copy_path") or result.get("summary_docx_path")
+        if report:
+            self.last_report_path = Path(report)
+            self.open_report_btn.configure(state="normal")
 
         match_count = result.get("match_count", 0)
         saved_count = result.get("saved_count", 0)
