@@ -9,6 +9,12 @@ pypandoc-binary>=1.13
 # MCP server for Claude Desktop integration (mcp_server.py)
 mcp>=1.2
 
+# GUI (cdi_outlook_gui.py)
+ttkbootstrap>=1.10
+
+# Build a standalone .exe for co-worker distribution (optional, only needed by builder)
+pyinstaller>=6.0; sys_platform == 'win32'
+
 # Azure / Microsoft Graph path (scrape_outlook.py)
 msal>=1.28
 

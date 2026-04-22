@@ -260,8 +260,13 @@ def scrape_outlook(
     generate_summary: bool = True,
     max_emails_for_summary: int = 200,
     log: Logger | None = None,
+    preview_callback: Callable[[list[dict]], list[str] | None] | None = None,
 ) -> dict:
-    """Core scrape — callable from CLI, MCP server, or any Python process.
+    """Core scrape — callable from CLI, MCP server, GUI, or any Python process.
+
+    If `preview_callback` is set, after the scan completes it's called with a
+    list of match metadata dicts (entry_id, subject, from, date, body_preview).
+    It should return a list of approved entry_ids to keep, or None to cancel.
 
     Returns a dict with: match_count, saved_count, emails_dir, index_path,
     summary_markdown, summary_md_path, summary_docx_path, errors.
@@ -323,6 +328,35 @@ def scrape_outlook(
         return result
 
     matches.sort(key=lambda m: m.ReceivedTime)
+
+    if preview_callback is not None:
+        metadata = [
+            {
+                "entry_id": m.EntryID,
+                "subject": m.Subject or "",
+                "from": (
+                    getattr(m, "SenderEmailAddress", "")
+                    or getattr(m, "SenderName", "")
+                    or "unknown"
+                ),
+                "date": m.ReceivedTime.isoformat(),
+                "body_preview": (m.Body or "")[:200].replace("\n", " ").replace("\r", " "),
+                "has_attachments": bool(m.Attachments.Count) if hasattr(m, "Attachments") else False,
+            }
+            for m in matches
+        ]
+        approved = preview_callback(metadata)
+        if approved is None:
+            result["errors"].append("Cancelled by user at preview step.")
+            log("Preview cancelled — nothing saved.")
+            return result
+        approved_set = set(approved)
+        matches = [m for m in matches if m.EntryID in approved_set]
+        log(f"User approved {len(matches)}/{result['match_count']} matches for save.")
+        result["approved_count"] = len(matches)
+        if not matches:
+            return result
+
     log(f"Saving emails to {emails_dir} ...")
 
     index = []
