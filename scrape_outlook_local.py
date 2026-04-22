@@ -220,13 +220,15 @@ def search_matches(
 def list_recent_senders(
     namespace,
     months_back: int = 12,
+    max_items: int = 1000,
     log: Logger | None = None,
     progress_cb: Callable[[int, int], bool] | None = None,
 ) -> list[dict]:
-    """Walk all mail folders (minus Sent Items) and return unique senders
-    sorted by frequency. Used by the GUI sender picker.
+    """Walk mail folders (minus Sent Items) and return unique senders from
+    the most-recent `max_items` messages, sorted by frequency.
 
-    progress_cb(scanned_folders, scanned_items) -> False to cancel.
+    Folder iteration is newest-first per folder, so capping gives a recent
+    slice. progress_cb(scanned_folders, scanned_items) -> False to cancel.
     Each returned dict: {email, name, count}.
     """
     log = log or _noop
@@ -238,8 +240,23 @@ def list_recent_senders(
 
     scanned_folders = 0
     scanned_items = 0
+    hit_cap = False
+
+    def _finish() -> list[dict]:
+        status = "cancelled" if hit_cap else "done"
+        log(f"Sender scan {status}: {scanned_folders} folder(s), "
+            f"{scanned_items} email(s), {len(counts)} unique senders"
+            + (f" (capped at {max_items})" if hit_cap else ""))
+        return sorted(counts.values(), key=lambda d: (-d["count"], d["email"]))
+
     for store in namespace.Folders:
+        if scanned_items >= max_items:
+            hit_cap = True
+            break
         for folder in walk_folders(store, skip):
+            if scanned_items >= max_items:
+                hit_cap = True
+                break
             default_type = getattr(folder, "DefaultItemType", None)
             if default_type is not None and default_type not in (OL_DEFAULT_MAIL, OL_DEFAULT_POST):
                 continue
@@ -253,6 +270,9 @@ def list_recent_senders(
             scanned_folders += 1
             item = filtered.GetFirst()
             while item is not None:
+                if scanned_items >= max_items:
+                    hit_cap = True
+                    break
                 try:
                     if getattr(item, "Class", 0) == OL_MAIL:
                         email = (getattr(item, "SenderEmailAddress", "") or "").strip()
@@ -266,9 +286,8 @@ def list_recent_senders(
                     scanned_items += 1
                     if progress_cb and scanned_items % 100 == 0:
                         if progress_cb(scanned_folders, scanned_items) is False:
-                            log("Sender scan cancelled.")
-                            return sorted(counts.values(),
-                                          key=lambda d: (-d["count"], d["email"]))
+                            hit_cap = True
+                            return _finish()
                 except Exception:
                     pass
                 try:
@@ -276,9 +295,7 @@ def list_recent_senders(
                 except Exception:
                     break
 
-    log(f"Scanned {scanned_folders} folder(s), {scanned_items} email(s). "
-        f"Found {len(counts)} unique senders.")
-    return sorted(counts.values(), key=lambda d: (-d["count"], d["email"]))
+    return _finish()
 
 
 def save_item(item, emails_dir: Path, attachments_dir: Path, extract_attachments: bool, log: Logger, save_msg: bool = True) -> dict:
