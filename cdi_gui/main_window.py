@@ -77,7 +77,7 @@ class MainWindow(tb.Window):
 
         right = tb.Frame(bar, bootstyle=PRIMARY)
         right.pack(side="right", fill="y")
-        tb.Button(right, text="Settings", bootstyle="inverse-primary",
+        tb.Button(right, text="Settings", bootstyle="light",
                   command=self._open_wizard).pack(side="right")
 
     def _build_form(self):
