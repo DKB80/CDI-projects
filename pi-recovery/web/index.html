@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CDI Recovery</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #191d24; --line: #2a2f38;
+    --fg: #e7ebf0; --muted: #9aa4b2; --ok: #3fb950; --bad: #f85149; --warn: #d29922; --accent: #4c8dff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f5f6f8; --card:#fff; --line:#e2e5ea; --fg:#1b1f27; --muted:#5c6675; --ok:#1a7f37; --bad:#cf222e; --warn:#9a6700; --accent:#0a66d6; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         background:var(--bg); color:var(--fg); padding:20px; }
+  .wrap { max-width:720px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 2px; display:flex; align-items:center; gap:10px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+  .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 12px; }
+  .row { display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid var(--line); }
+  .row:last-child { border-bottom:0; }
+  .k { color:var(--muted); }
+  .pill { font-size:12px; font-weight:600; padding:2px 9px; border-radius:20px; }
+  .pill.ok  { color:var(--ok);  background:color-mix(in srgb, var(--ok) 15%, transparent); }
+  .pill.bad { color:var(--bad); background:color-mix(in srgb, var(--bad) 15%, transparent); }
+  .pill.warn{ color:var(--warn);background:color-mix(in srgb, var(--warn) 15%, transparent); }
+  .dot { width:9px; height:9px; border-radius:50%; display:inline-block; }
+  a.dl { color:var(--accent); text-decoration:none; font-weight:600; }
+  a.dl:hover { text-decoration:underline; }
+  .foot { color:var(--muted); font-size:12px; text-align:center; margin-top:8px; }
+  .empty { color:var(--muted); font-size:13px; }
+  details { border:1px solid var(--line); border-radius:10px; margin:8px 0; overflow:hidden; }
+  details > summary { cursor:pointer; padding:12px 14px; font-weight:600; list-style:none; display:flex; align-items:center; gap:8px; }
+  details > summary::-webkit-details-marker { display:none; }
+  details[open] > summary { border-bottom:1px solid var(--line); }
+  details .body { padding:12px 14px; }
+  .tag { font-size:11px; font-weight:700; padding:1px 7px; border-radius:6px; }
+  .tag.win { color:var(--accent); background:color-mix(in srgb, var(--accent) 15%, transparent); }
+  .tag.mac { color:var(--muted); background:color-mix(in srgb, var(--muted) 20%, transparent); }
+  .tag.stop{ color:var(--bad); background:color-mix(in srgb, var(--bad) 15%, transparent); }
+  ol.steps { margin:0; padding-left:18px; } ol.steps li { margin:6px 0; }
+  code { background:color-mix(in srgb, var(--muted) 18%, transparent); padding:1px 5px; border-radius:5px; font-size:13px; }
+  .note { color:var(--muted); font-size:12.5px; margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span id="live" class="dot" style="background:var(--muted)"></span> CDI Recovery</h1>
+  <div class="sub" id="host">connecting…</div>
+
+  <div class="card">
+    <h2>Services</h2>
+    <div id="services"><div class="empty">loading…</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Recovery media &amp; network</h2>
+    <div id="media"><div class="empty">loading…</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Guided recovery</h2>
+
+    <details>
+      <summary><span class="tag win">WIN</span> Windows — reset a lost local password</summary>
+      <div class="body">
+        <ol class="steps">
+          <li>Plug the Pi's <b>USB/OTG</b> port into the PC, then arm the drive: <code>sudo cdi-gadget-massstorage.sh on</code>.</li>
+          <li>Power on the PC and open its <b>boot menu</b> (usually <code>F12</code>, <code>F2</code> or <code>Esc</code>) → choose the USB drive.</li>
+          <li>SystemRescue loads. Find the Windows disk with <code>lsblk</code>, then mount it: <code>ntfs-3g /dev/sdXn /mnt</code>.</li>
+          <li><code>cd /mnt/Windows/System32/config</code> then <code>chntpw -u "Administrator" SAM</code> → pick <b>(1) clear password</b>, save.</li>
+          <li>Shut down. On the Pi: <code>sudo cdi-gadget-massstorage.sh off</code>. Log in with a blank password.</li>
+        </ol>
+        <div class="note">⚠ If the drive is <b>BitLocker</b>-encrypted you need the recovery key first, or it can't be read.</div>
+      </div>
+    </details>
+
+    <details>
+      <summary><span class="tag mac">MAC</span> Mac (Intel) — reset a lost password</summary>
+      <div class="body">
+        <div class="note" style="margin-top:0">No boot image needed — use the Mac's <b>built-in</b> Recovery.</div>
+        <ol class="steps">
+          <li>Shut the Mac down. Power on and immediately hold <code>⌘ + R</code> until the Apple logo / spinner appears.</li>
+          <li>At the macOS Utilities screen, open the menu bar: <b>Utilities → Terminal</b>.</li>
+          <li>Type <code>resetpassword</code> and press Return — the Reset Password tool opens.</li>
+          <li>Pick the user, set a new password, save, then restart.</li>
+        </ol>
+        <div class="note">If FileVault is on you may need the disk password or <b>recovery key</b> first. Once back in, install Tailscale from Hosted installers below.</div>
+      </div>
+    </details>
+
+    <details>
+      <summary><span class="tag stop">STOP</span> Mac (Apple Silicon M1/M2/M3) — different path</summary>
+      <div class="body">
+        <div class="note" style="margin-top:0">Apple Silicon Macs <b>don't</b> use ⌘-R and won't boot our USB. Don't force it.</div>
+        <ol class="steps">
+          <li>Confirm the chip: Apple menu → <b>About This Mac</b>. If it says <b>Apple M1/M2/M3</b>, use this path.</li>
+          <li>Shut down. Press and <b>hold the power button</b> until "Loading startup options" → <b>Options → Continue</b>.</li>
+          <li><b>Utilities → Terminal</b> → <code>resetpassword</code>, or use "I forgot my password" / Recovery Assistant.</li>
+          <li>No password <i>and</i> no recovery key with FileVault on = data is unrecoverable by design — escalate to the office.</li>
+        </ol>
+      </div>
+    </details>
+    <div style="margin-top:10px"><a class="dl" href="/guide">📖 Open the full field guide →</a></div>
+  </div>
+
+  <div class="card">
+    <h2>Hosted installers</h2>
+    <div id="installers"><div class="empty">loading…</div></div>
+  </div>
+
+  <div class="foot">Status refreshes every 5s. Serve only equipment you own or are authorized to service.</div>
+</div>
+
+<script>
+function pill(state, goodLabel, badLabel) {
+  const ok = state === 'active' || state === 'authenticated' || state === true;
+  const warnish = state === 'not-authenticated';
+  const cls = ok ? 'ok' : (warnish ? 'warn' : 'bad');
+  const label = typeof state === 'boolean' ? (state ? goodLabel : badLabel) : state;
+  return `<span class="pill ${cls}">${label}</span>`;
+}
+function row(k, valHtml) {
+  return `<div class="row"><span class="k">${k}</span><span>${valHtml}</span></div>`;
+}
+async function refresh() {
+  try {
+    const r = await fetch('/api/status', {cache:'no-store'});
+    const d = await r.json();
+    document.getElementById('live').style.background = 'var(--ok)';
+    const up = d.uptime_seconds >= 0 ? Math.floor(d.uptime_seconds/3600)+'h '+Math.floor((d.uptime_seconds%3600)/60)+'m' : '—';
+    document.getElementById('host').textContent = `${d.hostname} · up ${up}`;
+
+    const svc = d.services || {};
+    document.getElementById('services').innerHTML =
+      Object.keys(svc).map(name => row(name, pill(svc[name]))).join('');
+
+    const img = d.recovery_image || {};
+    document.getElementById('media').innerHTML =
+      row('Recovery image', pill(!!img.present, img.size_human || 'ready', 'missing')) +
+      row('Tailscale (this Pi)', pill(d.tailscale));
+
+    const inst = d.installers || [];
+    document.getElementById('installers').innerHTML = inst.length
+      ? inst.map(i => row(i.name + ' <span class="k">('+i.size_human+')</span>', `<a class="dl" href="${i.url}">download</a>`)).join('')
+      : '<div class="empty">No installers hosted yet. Run fetch-installers.sh on the Pi.</div>';
+  } catch (e) {
+    document.getElementById('live').style.background = 'var(--bad)';
+    document.getElementById('host').textContent = 'offline';
+  }
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

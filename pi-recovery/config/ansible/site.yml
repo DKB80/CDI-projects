@@ -1,0 +1,62 @@
+---
+# CDI standard config over the network. Idempotent + verifiable.
+#   dry run:  ansible-playbook site.yml --check --diff
+#   apply:    ansible-playbook site.yml
+#   verify:   ansible-playbook site.yml --tags verify --check
+# Requires:   ansible-galaxy collection install ansible.windows community.windows
+
+- name: Windows standard configuration
+  hosts: windows
+  gather_facts: false
+  vars:
+    packages: ['Tailscale.Tailscale']          # winget IDs
+    timezone: 'W. Australia Standard Time'
+  tasks:
+    - name: OS - timezone
+      ansible.windows.win_timezone: { timezone: "{{ timezone }}" }
+      tags: [os, verify]
+
+    - name: OS - enable RDP
+      ansible.windows.win_regedit:
+        path: HKLM:\System\CurrentControlSet\Control\Terminal Server
+        name: fDenyTSConnections
+        data: 0
+        type: dword
+      tags: [os]
+
+    - name: OS - firewall on (all profiles)
+      ansible.windows.win_firewall: { state: enabled, profiles: [Domain, Private, Public] }
+      tags: [os]
+
+    - name: Software - ensure winget packages
+      ansible.windows.win_command: "winget install --id {{ item }} -e --silent --accept-package-agreements --accept-source-agreements"
+      register: wg
+      changed_when: "'Successfully installed' in wg.stdout"
+      failed_when: false
+      loop: "{{ packages }}"
+      tags: [software]
+
+    - name: Services - W32Time automatic
+      ansible.windows.win_service: { name: W32Time, start_mode: auto, state: started }
+      tags: [services]
+
+    # - name: Network - static IP (uncomment + set per host)
+    #   ansible.windows.win_command: >-
+    #     netsh interface ip set address name="Ethernet" static 192.168.1.50 255.255.255.0 192.168.1.1
+    #   tags: [network]
+
+- name: macOS / Linux standard configuration
+  hosts: mac
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Software - Tailscale present (macOS via Homebrew cask)
+      community.general.homebrew_cask: { name: tailscale, state: present }
+      failed_when: false
+      tags: [software]
+
+    - name: Services - example launchd/daemon check
+      ansible.builtin.command: launchctl print system/com.tailscale.tailscaled
+      changed_when: false
+      failed_when: false
+      tags: [services, verify]
