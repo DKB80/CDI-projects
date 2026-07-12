@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CDI Recovery — Field Guide</title>
+<style>
+  :root { --bg:#0f1115; --card:#191d24; --line:#2a2f38; --fg:#e7ebf0; --muted:#9aa4b2; --ok:#3fb950; --bad:#f85149; --warn:#d29922; --accent:#4c8dff; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f5f6f8; --card:#fff; --line:#e2e5ea; --fg:#1b1f27; --muted:#5c6675; --ok:#1a7f37; --bad:#cf222e; --warn:#9a6700; --accent:#0a66d6; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--fg); padding:20px; }
+  .wrap { max-width:720px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 2px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:18px; }
+  a.back { color:var(--accent); text-decoration:none; font-weight:600; font-size:13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 10px; display:flex; align-items:center; gap:8px; }
+  .tag { font-size:11px; font-weight:700; padding:1px 7px; border-radius:6px; }
+  .tag.win{ color:var(--accent); background:color-mix(in srgb,var(--accent) 15%,transparent); }
+  .tag.mac{ color:var(--muted); background:color-mix(in srgb,var(--muted) 20%,transparent); }
+  .tag.stop{ color:var(--bad); background:color-mix(in srgb,var(--bad) 15%,transparent); }
+  .tag.net{ color:var(--ok); background:color-mix(in srgb,var(--ok) 16%,transparent); }
+  ol,ul { margin:0; padding-left:20px; } li { margin:6px 0; }
+  code { background:color-mix(in srgb,var(--muted) 18%,transparent); padding:1px 5px; border-radius:5px; font-size:13px; }
+  .note { color:var(--muted); font-size:12.5px; margin-top:8px; }
+  .warn { color:var(--warn); font-weight:600; }
+  .foot { color:var(--muted); font-size:12px; text-align:center; margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">← Back to status panel</a>
+  <h1>CDI Recovery — Field Guide</h1>
+  <div class="sub">Offline reference. Use only on equipment you own or are contracted to service.</div>
+
+  <div class="card">
+    <h2>Reach this Pi</h2>
+    <ul>
+      <li><b>On a network:</b> <code>ssh pi@cdi-recovery.local</code>, or this panel at <code>http://cdi-recovery.local:5000</code>.</li>
+      <li><b>No site network:</b> on the Pi run <code>sudo cdi-field-mode.sh on 15</code>, join WiFi <b>CDI-Recovery</b> (passphrase from your CDI credentials), then browse <code>http://192.168.4.1:5000</code>. It reverts to normal WiFi automatically.</li>
+      <li><b>Remotely:</b> the office can reach it over Tailscale.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2><span class="tag win">WIN</span> Windows — reset a lost local password</h2>
+    <ol>
+      <li>Plug the Pi's <b>USB/OTG</b> port into the PC. Arm the drive: <code>sudo cdi-gadget-massstorage.sh on</code>.</li>
+      <li>Power on the PC, open the <b>boot menu</b> (<code>F12</code>/<code>F2</code>/<code>Esc</code>), pick the USB drive.</li>
+      <li>SystemRescue loads. <code>lsblk</code> to find the Windows disk, then <code>ntfs-3g /dev/sdXn /mnt</code>.</li>
+      <li><code>cd /mnt/Windows/System32/config</code> → <code>chntpw -u "Administrator" SAM</code> → choose <b>(1) clear password</b>, save.</li>
+      <li>Shut down, then <code>sudo cdi-gadget-massstorage.sh off</code>. Log in with a blank password.</li>
+    </ol>
+    <div class="note"><span class="warn">⚠ BitLocker:</span> if the drive is encrypted you need the recovery key first, or it can't be read.</div>
+  </div>
+
+  <div class="card">
+    <h2><span class="tag mac">MAC</span> Mac (Intel) — reset a lost password</h2>
+    <div class="note" style="margin-top:0">No boot image needed — use the Mac's built-in Recovery.</div>
+    <ol>
+      <li>Shut down. Power on and hold <code>⌘ + R</code> until the Apple logo/spinner appears.</li>
+      <li>Menu bar: <b>Utilities → Terminal</b>.</li>
+      <li>Type <code>resetpassword</code>, Return. Pick the user, set a new password, save, restart.</li>
+    </ol>
+    <div class="note">FileVault on? You may need the disk password or recovery key first. Then install Tailscale from the panel's Hosted installers.</div>
+  </div>
+
+  <div class="card">
+    <h2><span class="tag stop">STOP</span> Mac (Apple Silicon M1/M2/M3)</h2>
+    <div class="note" style="margin-top:0"><span class="warn">Different path — don't force our USB, it won't boot.</span></div>
+    <ol>
+      <li>Confirm chip: Apple menu → <b>About This Mac</b>. Apple M1/M2/M3 → use this path.</li>
+      <li>Shut down. <b>Hold the power button</b> until "Loading startup options" → <b>Options → Continue</b>.</li>
+      <li><b>Utilities → Terminal</b> → <code>resetpassword</code>, or "I forgot my password".</li>
+      <li>No password AND no recovery key with FileVault on = unrecoverable by design → escalate to the office.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2><span class="tag net">CFG</span> Standardise / verify a machine</h2>
+    <ul>
+      <li><b>Networked:</b> on this Pi, <code>cd /opt/cdi-recovery/config/ansible</code> → <code>ansible-playbook site.yml --check --diff</code> (preview) → without <code>--check</code> to apply. Windows needs <code>bootstrap-winrm.ps1</code> run once per host first.</li>
+      <li><b>Standalone:</b> from the Pi's USB, elevated: <code>configure.ps1 -WhatIf</code> (preview) → <code>configure.ps1</code> → <code>verify.ps1</code> (Mac: <code>sudo bash configure.sh</code>). Each run writes a <code>*.report.txt</code> — keep it as the compliance record.</li>
+    </ul>
+  </div>
+
+  <div class="foot">CDI Recovery Pi · field guide · authorised equipment only</div>
+</div>
+</body>
+</html>

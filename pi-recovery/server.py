@@ -142,6 +142,15 @@ def index():
     )
 
 
+@app.get("/guide")
+def guide():
+    """Offline, secret-free field guide for the tech."""
+    g = WEB_DIR / "field-guide.html"
+    if g.is_file():
+        return Response(g.read_text(), mimetype="text/html")
+    abort(404)
+
+
 if __name__ == "__main__":
     # Bind to all interfaces so the AP clients (192.168.4.x) can reach it.
     app.run(host="0.0.0.0", port=WEB_PORT)

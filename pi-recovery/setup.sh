@@ -64,11 +64,22 @@ fi
 # ---------------------------------------------------------------------------
 log "[1/8] Enabling USB OTG (dwc2) for mass-storage gadget mode"
 # ---------------------------------------------------------------------------
-if ! grep -q '^dtoverlay=dwc2' "$CONFIG_TXT"; then
-  echo 'dtoverlay=dwc2' >> "$CONFIG_TXT"
-  echo "  added dtoverlay=dwc2 to $CONFIG_TXT"
+# NOTE: a loose 'grep ^dtoverlay=dwc2' false-matches board-specific defaults in
+# stock config.txt (e.g. the [cm5] 'dtoverlay=dwc2,dr_mode=host' line), which
+# would leave a Pi Zero 2W with the USB in host mode and no gadget. Key off a
+# unique marker instead, and append a fresh [all] section so the overlay applies
+# to this board regardless of what precedes it. dr_mode=peripheral keeps the UDC
+# available on demand (this appliance is only ever a USB device, never a host).
+if ! grep -q 'CDI-Recovery dwc2 gadget' "$CONFIG_TXT"; then
+  cat >> "$CONFIG_TXT" <<'CFG'
+
+[all]
+# CDI-Recovery dwc2 gadget (peripheral mode; applies to Pi Zero 2W etc.)
+dtoverlay=dwc2,dr_mode=peripheral
+CFG
+  echo "  added dtoverlay=dwc2,dr_mode=peripheral under [all] in $CONFIG_TXT"
 else
-  echo "  dtoverlay=dwc2 already present"
+  echo "  CDI dwc2 gadget overlay already present"
 fi
 # Ensure modules load at boot (libcomposite is what the gadget scripts use).
 grep -qxF 'dwc2'        /etc/modules || echo 'dwc2'        >> /etc/modules
